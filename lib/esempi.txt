@@ -1,0 +1,77 @@
+/*
+    // Esempio settaggio Pan Id
+    if (dwm_panid_set(0x0005) == 0) {
+      printf("PANID impostato con successo\n");
+    } else {
+        printf("Errore impostando PANID (controlla con panid_get)\n");
+    }  
+
+    // Esempio settaggio posizione
+    dwm_pos_t pos;
+    pos.x = 121;
+    pos.y = 50;
+    pos.z = 251;
+    pos.qf = 100;
+    dwm_pos_set(&pos);
+    usleep(10000);
+
+    // Esempio lettura posizione
+    dwm_pos_t pos2;
+    dwm_pos_get(&pos2);
+    printf("Posizione attuale: x=%d, y=%d, z=%d, qf=%d\n", pos2.x, pos2.y, pos2.z, pos2.qf);
+    
+    // Esempio lettura PANID
+    dwm_panid_get();
+    usleep(10000);
+
+
+    // Esempio di settaggio della configurazione del dispositivo come tag
+    dwm_cfg_tag_t cfg;
+    cfg.stnry_en = true; // Modalità stazionaria con rate di aggiornamento per questa modalità
+    cfg.meas_mode = DWM_MEAS_MODE_TWR; // Modalità di misurazione Time of Flight
+    cfg.loc_engine_en = true; // Abilita il motore di localizzazione
+    cfg.low_power_en = false; // Disabilita la modalità di risparmio energetico
+    cfg.common.uwb_mode = DWM_UWB_MODE_ACTIVE; // Modalità UWB attiva
+    cfg.common.ble_en = true; // Abilita il BLE
+    cfg.common.enc_en = false; // Disabilita l'encryption
+    cfg.common.led_en = true; // Abilita i LED
+    cfg.common.fw_update_en = true; // Abilita l'aggiornamento del firmware per permettere sincronizzazione
+    // con firmware di altri dispositivi (consigliato dalla documentazione)
+    dwm_cfg_tag_set(&cfg);
+    usleep(10000);
+
+    // Esempio di reset del dispositivo per applicare le modifiche
+    dwm_reset();
+
+    // Esempio ottenimento configurazione dispositivo
+    dwm_cfg_t cfg;
+    dwm_cfg_get(&cfg);
+    printf("mode %u \n", cfg.mode);
+    printf("initiator %u \n", cfg.initiator);
+    printf("bridge %u \n", cfg.bridge);
+    printf("motion detection enabled %u \n", cfg.stnry_en);
+    printf("measurement mode %u \n", cfg.meas_mode);
+    printf("low power enabled %u \n", cfg.low_power_en);
+    printf("internal location engine enabled %u \n", cfg.loc_engine_en);
+    printf("encryption enabled %u \n", cfg.common.enc_en);
+    printf("LED enabled %u \n", cfg.common.led_en);
+    printf("BLE enabled %u \n", cfg.common.ble_en);
+    printf("firmware update enabled %u \n", cfg.common.fw_update_en);
+    printf("UWB mode %u \n", cfg.common.uwb_mode);
+
+    // Esempio di settaggio come ancora 
+    dwm_cfg_anchor_t cfg;
+    int rv;
+
+    cfg.initiator = 1; 
+    cfg.bridge = 0; 
+    cfg.common.enc_en = 0; 
+    cfg.common.led_en = 1; 
+    cfg.common.ble_en = 1; 
+    cfg.common.fw_update_en = 1; 
+    cfg.common.uwb_mode = DWM_UWB_MODE_OFF; 
+    dwm_cfg_anchor_set(&cfg); 
+
+    usleep(10000);
+
+    */

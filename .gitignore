@@ -1,2 +1,7 @@
-# ignora cartella grafici
+# ignora cartelle
 grafici/
+ex-lib/
+
+# ignora eseguibili e file .o
+*.exe
+*.o
