@@ -35,11 +35,14 @@
  #include "deca_regs.h"
  #include "deca_device_api.h"
  #include "uart.h"
+ //#include "UART.h"
  
- /* Dichiaro in precedenza le funzioni che dovrÃ² usare successivamente */
+ /* Dichiaro in precedenza le funzioni che dovrò usare successivamente */
  extern void ss_init_run(uint8_t anchor_id);           // Funzione per utilizzo come iniziatore comunicazione
  extern void ss_resp_run(uint8_t anchor_id);           // Funzione per utilizzo come risponditore comunicazione
  extern void ss_main_task_function(void *pvParameter); // Funzione per gestione task
+
+
  
  //-----------------dw1000----------------------------
  
@@ -74,23 +77,23 @@
  #define TIMER_PERIOD 2000 /**< Timer period. LED1 timer will expire after 1000 ms */
  #define RNG_DELAY_MS 100  /**< Delay between two ranging requests. */
  
- /* Variabile globale che tiene conto della modalitÃ  di utilizzo del dispositivo */
+ /* Variabile globale che tiene conto della modalità di utilizzo del dispositivo */
  typedef enum
  {
-   DEVICE_MODE_INITIATOR = 0, /* Dispositivo in modalitÃ  iniziatore */
-   DEVICE_MODE_RESPONDER = 1, /* Dispositivo in modalitÃ  risponditore */
+   DEVICE_MODE_INITIATOR = 0, /* Dispositivo in modalità iniziatore */
+   DEVICE_MODE_RESPONDER = 1, /* Dispositivo in modalità risponditore */
  } device_mode_t;
  
- volatile device_mode_t device_mode = DEVICE_MODE_INITIATOR; /* Imposto modalitÃ  iniziale come iniziatore */
- volatile bool_mode_changed = false;                         /* Flag booleana per inidicare che la modalitÃ  Ã¨ cambiata */
+ volatile device_mode_t device_mode = DEVICE_MODE_INITIATOR; /* Imposto modalità iniziale come iniziatore */
+ volatile bool bool_mode_changed = false;                         /* Flag booleana per inidicare che la modalità è cambiata */
  
- /* Impostazioni modalitÃ  multi-risponditore
+ /* Impostazioni modalità multi-risponditore
  Configurare in base al numero di risponditori utilizzati */
  #define MAX_RESPONDERS 16 // da aggiornare anche su ss_init_main.c in caso di cambiamento
  volatile uint8_t anchor_ids[MAX_RESPONDERS] = {0, 1, 2, 3, 4, 5, 6, 7, 8,
                                                            9, 10, 11, 12, 13, 14, 15}; /* ID dei risponditori */
  volatile uint8_t DEVICE_ID = 0; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
- volatile bool anchor_enabled[MAX_RESPONDERS] = {true, true, false, false, false, false, false, false,
+ volatile bool anchor_enabled[MAX_RESPONDERS] = {true, true, true, false, false, false, false, false,
                                                         false, false, false, false, false, false, false, false}; /* Abilitazione dei risponditori */
  
  /* Gestione del buffer di comandi provenienti da UART */
@@ -280,7 +283,7 @@
    /*Initialization UART*/
    boUART_Init();
  
-   set_uart_rx_handler(uart_event_handler);
+   //set_uart_rx_handler(uart_event_handler);
  
    printf("\r\n\r\n--- Unified system per multi-responder ---\r\n");
    printf("Send 'INIT' for Initiator mode, 'RESP' for Responder mode\r\n");
@@ -361,9 +364,9 @@
      if (device_mode == DEVICE_MODE_INITIATOR){
        // gestisco la comunicazione con tutti i risponditori
        for (int i = 0; i< MAX_RESPONDERS; i++){
-         if(anchor_enabled[i]) {
+         if(anchor_enabled[i] && i!=DEVICE_ID) {
            ss_init_run(i);
-           nrf_delay_ms(10);
+           nrf_delay_ms(100);
          }
        }
      } else {
@@ -392,7 +395,7 @@
   *    device should have its own antenna delay properly calibrated to get good precision when performing range measurements.
   * 3. This timeout is for complete reception of a frame, i.e. timeout duration must take into account the length of the expected frame. Here the value
   *    is arbitrary but chosen large enough to make sure that there is enough time to receive the complete response frame sent by the responder at the
-  *    6.8M data rate used (around 200 ï¿½s).
+  *    6.8M data rate used (around 200 �s).
   * 4. In a real application, for optimum performance within regulatory limits, it may be necessary to set TX pulse bandwidth and TX power, (using
   *    the dwt_configuretxrf API call) to per device calibrated values saved in the target system or the DW1000 OTP memory.
   * 5. The user is referred to DecaRanging ARM application (distributed with EVK1000 product) for additional practical example of usage, and to the

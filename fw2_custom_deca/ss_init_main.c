@@ -47,7 +47,7 @@ extern volatile uint8_t anchor_ids[MAX_RESPONDERS];
 extern volatile uint8_t DEVICE_ID;
 extern volatile bool anchor_enabled[MAX_RESPONDERS];
 
-/* Setting globali validi per entrambe le modalitÃ  */
+/* Setting globali validi per entrambe le modalità */
 #define POLL_RX_TO_RESP_TX_DLY_UUS  1100
 #define RESP_TX_TO_FINAL_RX_DLY_UUS 500
 #define UUS_TO_DWT_TIME 65536
@@ -91,7 +91,7 @@ static uint8 rx_buffer[RX_BUF_LEN];
 static uint32 status_reg = 0;
 
 /* UWB microsecond (uus) to device time unit (dtu, around 15.65 ps) conversion factor.
-* 1 uus = 512 / 499.2 ï¿½s and 1 ï¿½s = 499.2 * 128 dtu. */
+* 1 uus = 512 / 499.2 �s and 1 �s = 499.2 * 128 dtu. */
 #define UUS_TO_DWT_TIME 65536
 
 /* Speed of light in air, in metres per second. */
