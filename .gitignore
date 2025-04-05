@@ -5,3 +5,6 @@ ex-lib/
 # ignora eseguibili e file .o
 *.exe
 *.o
+
+# ignora file in .vscode
+.vscode
