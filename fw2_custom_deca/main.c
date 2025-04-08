@@ -39,10 +39,41 @@
  #include "nrf_drv_gpiote.h"
  #include "utils.h"
  //#include "UART.h"
+
+
+ /* ------------------Configurazione SPI -----------------------*/
+ #define MY_SPI_INSTANCE 0 // Si fa uso di SPI0 (è possibile configurare anche a 1 se serve)
+ static const nrf_drv_spi_t my_spi = NRF_DRV_SPI_INSTANCE(MY_SPI_INSTANCE);
+ static volatile bool spi_transfer_complete = true; // flag per indicare trasferimento dati con SPI
+
+ // Pin SPI corretti
+ #define SPI_MISO_PIN 27
+ #define SPI_MOSI_PIN 26
+ #define SPI_SCLK_PIN 25
+ #define SPI_SS_PIN 29
+
+ // Command buffer
+ #define SPI_CMD_BUFFER_SIZE 128 // Dimensione massima buffer SPI
+ static char spi_cmd_buffer[SPI_CMD_BUFFER_SIZE];
+ static uint8_t spi_cmd_buffer_index = 0; // Indice di scorrimento del buffer SPI
+ static uint8_t spi_rx_buffer[SPI_CMD_BUFFER_SIZE]; // Buffer di ricezione di SPI
+ static uint8_t spi_tx_buffer[SPI_CMD_BUFFER_SIZE]; // Buffer di trasmissione di SPI
+
+ // Gestione risposte SPI
+ static bool spi_response_ready = false;
+ static uint8_t spi_response_buffer[SPI_CMD_BUFFER_SIZE];
+ static uint8_t spi_response_length = 0;
+
+ //extern responder_distance_t distances[MAX_RESPONDERS]; // Vettore delle distanze per il dispositivo
+
+
+
+/*-------------------------------fine-----------------------------------*/
+ 
  
  /* Dichiaro in precedenza le funzioni che dovrÃ² usare successivamente */
- extern void ss_init_run(uint8_t anchor_id);           // Funzione per utilizzo come iniziatore comunicazione
- extern void ss_resp_run(uint8_t anchor_id);           // Funzione per utilizzo come risponditore comunicazione
+ extern int ss_init_run(uint8_t anchor_id);           // Funzione per utilizzo come iniziatore comunicazione
+ extern int ss_resp_run(uint8_t anchor_id);           // Funzione per utilizzo come risponditore comunicazione
  extern void ss_main_task_function(void *pvParameter); // Funzione per gestione task
  extern void ss_initiator_task_function(void *pvParameter);
 
@@ -85,19 +116,23 @@
  #define TIMER_PERIOD 2000 /**< Timer period. LED1 timer will expire after 1000 ms */
  #define RNG_DELAY_MS 100  /**< Delay between two ranging requests. */
  
- /* Variabile globale che tiene conto della modalitÃ  di utilizzo del dispositivo */
+ /*
+ // Variabile globale che tiene conto della modalitÃ  di utilizzo del dispositivo 
  typedef enum
  {
-   DEVICE_MODE_INITIATOR = 0, /* Dispositivo in modalitÃ  iniziatore */
-   DEVICE_MODE_RESPONDER = 1, /* Dispositivo in modalitÃ  risponditore */
+   DEVICE_MODE_INITIATOR = 0, // Dispositivo in modalitÃ  iniziatore 
+   DEVICE_MODE_RESPONDER = 1, // Dispositivo in modalitÃ  risponditore 
  } device_mode_t;
+
+  #define MAX_RESPONDERS 16 // da aggiornare anche su ss_init_main.c in caso di cambiamento
+ */
  
  volatile device_mode_t device_mode = DEVICE_MODE_INITIATOR; /* Imposto modalitÃ  iniziale come iniziatore */
  volatile bool bool_mode_changed = false;                         /* Flag booleana per inidicare che la modalitÃ  Ã¨ cambiata */
  
  /* Impostazioni modalitÃ  multi-risponditore
  Configurare in base al numero di risponditori utilizzati */
- #define MAX_RESPONDERS 16 // da aggiornare anche su ss_init_main.c in caso di cambiamento
+
  volatile uint8_t anchor_ids[MAX_RESPONDERS] = {0, 1, 2, 3, 4, 5, 6, 7, 8,
                                                            9, 10, 11, 12, 13, 14, 15}; /* ID dei risponditori */
  volatile uint8_t DEVICE_ID = 0; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
@@ -144,6 +179,9 @@ static uint8_t cmd_buffer_index = 0;
  }
  
  #endif
+
+
+ /* ------------------------ UART -------------------------------*/
  
  /* Funzione che gestisce i comandi di setting inviati via UART*/
 static void process_uart_command(char *cmd)
@@ -336,6 +374,150 @@ static void uart_task_function(void *pvParameter)
    }
  }
 
+ /*-------------------------------fine------------------------*/
+
+
+ /*------------------------------SPI-------------------------*/
+
+ /*
+    Funzione di utilità per la gestione di eventi SPI come ricezione comandi, ecc.
+ */
+void my_spi_event_handler(nrf_drv_spi_evt_t const * p_event, void *p_context){
+   spi_transfer_complete = true;
+
+   if(p_event->type == NRF_DRV_SPI_EVENT_DONE){
+    // Processa i dati ricevuti
+    bool command_found = false;
+
+    for (int i = 0; i < SPI_CMD_BUFFER_SIZE; i++){
+      if(spi_rx_buffer[i] == '\r' || spi_rx_buffer[i] == '\n'){
+        if (i > 0) {
+          // Termina comando con \0
+          spi_rx_buffer[i] = '\0';
+
+          // processa il comando
+          process_uart_command((char*)spi_rx_buffer); // Uso la funzione già esistente creata per UART
+          command_found = true;
+          break;
+        }
+      }
+      else if (spi_rx_buffer[i] == '\0') {
+        if(i>0){
+          process_uart_command((char*)spi_rx_buffer);
+          command_found = true;
+        }
+        break;
+      }
+    }
+   
+     if (command_found){
+       // Preparo risposta per il prossimo trasferimento SPI
+       const char* resp = "OK\r\n";
+       strcpy((char*)spi_tx_buffer, resp);
+     }
+   }
+ }
+
+ // Funzione di inizializzazione SPI
+ static void spi_init(void){
+  ret_code_t err_code;
+
+  nrf_drv_spi_config_t spi_config = NRF_DRV_SPI_DEFAULT_CONFIG;
+  spi_config.bit_order = NRF_DRV_SPI_BIT_ORDER_MSB_FIRST;
+  spi_config.frequency = NRF_DRV_SPI_FREQ_1M; // 1 MHz
+  spi_config.miso_pin = SPI_MISO_PIN;
+  spi_config.mode = NRF_DRV_SPI_MODE_0;
+  spi_config.mosi_pin  = SPI_MOSI_PIN;
+  spi_config.sck_pin = SPI_SCLK_PIN;
+  spi_config.ss_pin = SPI_SS_PIN;
+
+  err_code = nrf_drv_spi_init(&my_spi, &spi_config, my_spi_event_handler, NULL);
+  APP_ERROR_CHECK(err_code);
+
+  // pulizia buffer
+  memset(spi_rx_buffer, 0, SPI_CMD_BUFFER_SIZE);
+  memset(spi_tx_buffer, 0, SPI_CMD_BUFFER_SIZE);
+  memset(spi_cmd_buffer, 0, SPI_CMD_BUFFER_SIZE);
+
+  printf("SPI Inizializzato correttamente!\r\n");
+
+ }
+
+ // Funzione per preparare risposte SPI
+ static void spi_prepare_response(const char* response){
+  size_t len = strlen(response);
+  if(len > SPI_CMD_BUFFER_SIZE-1) {
+    len = SPI_CMD_BUFFER_SIZE -1;
+  }
+
+  // Copio la risposta al buffer di trasmissione
+  memcpy(spi_tx_buffer, response, len);
+  spi_tx_buffer[len] = '\0'; // termino correttamente il buffer
+  spi_response_ready = true;
+ }
+
+ // Funzione usata per inviare dati distanze SPI
+ static void spi_get_distance_data(void){
+  if (device_mode = DEVICE_MODE_INITIATOR) {
+    char response[SPI_CMD_BUFFER_SIZE];
+    int offset = 0;
+
+    //offset += snprintf(response+offset, SPI_CMD_BUFFER_SIZE-offset, "["); // da inserire se si vuole mettere '[' iniziale
+
+    for (int i = 0; i < MAX_RESPONDERS; i++) {
+      if (i < MAX_RESPONDERS-1){ // tutti gli elementi al di fuori dell'ultimo
+        if (anchor_enabled[i] && i != DEVICE_ID && distances[i].valid) {
+          offset += snprintf(response+offset, SPI_CMD_BUFFER_SIZE-offset, "%.3f,", distances[i].distance);
+        }
+        else{
+          // Distanza non valida, uso -1.00 come placeholder
+          offset += snprintf(response+offset, SPI_CMD_BUFFER_SIZE-offset, "-1.00,");
+        }
+      } else {
+        // Ultimo elemento
+        if (anchor_enabled[i] && i != DEVICE_ID && distances[i].valid) {
+          offset += snprintf(response+offset, SPI_CMD_BUFFER_SIZE-offset, "%.3f", distances[i].distance);
+        }
+        else{
+          // Distanza non valida, uso -1.00 come placeholder
+          offset += snprintf(response+offset, SPI_CMD_BUFFER_SIZE-offset, "-1.00");
+        }
+      }
+
+      //offset += snprintf(response+offset, SPI_CMD_BUFFER_SIZE-offset, "]"); // da inserire se si vuole mettere ']' finale
+    }
+  }
+  else{ // Il dispositivo è un responder
+    spi_prepare_response("Qui andranno le distanze salvate in precedenza...");
+  }
+ }
+
+
+ #ifdef USE_FREERTOS
+ TaskHandle_t spi_task_handle;
+
+ static void spi_task_function(void *pvParameter){
+    UNUSED_PARAMETER(pvParameter);
+
+    spi_init();
+    while(true){
+      if(spi_transfer_complete){
+        spi_transfer_complete = false;
+
+        // Inizializza trasferimento bi-direzionale SPI
+        nrf_drv_spi_transfer(&my_spi, spi_tx_buffer, SPI_CMD_BUFFER_SIZE, spi_rx_buffer, SPI_CMD_BUFFER_SIZE);
+
+        // pulizia buffer trasmissione dopo aver schedultato trasferimento
+        memset(spi_tx_buffer, 0, SPI_CMD_BUFFER_SIZE);
+      }
+    }
+    
+    vTaskDelay(10);
+ }
+
+ #endif
+
+ /*-------------------------------fine------------------------*/
 
  /* DWM1000 interrupt initialization and handler definition */
 
@@ -387,16 +569,26 @@ void vInterruptInit (void)
 
     /* Create task for SS TWR Initiator set to 2 */
     UNUSED_VARIABLE(xTaskCreate(ss_initiator_task_function, "SSTWR_INIT", configMINIMAL_STACK_SIZE + 200, NULL, 2, &ss_main_task_handle));
+
+    // Task UART
+    UNUSED_VARIABLE(xTaskCreate(uart_task_function, "UART", configMINIMAL_STACK_SIZE + 200, NULL, 2, &uart_task_handle));
+    // Task SPI
+    UNUSED_VARIABLE(xTaskCreate(spi_task_function, "SPI", configMINIMAL_STACK_SIZE+200, NULL, 2, &spi_task_handle));
+
   #endif // #ifdef USE_FREERTOS
  
    /*Initialization UART*/
    boUART_Init();
+
+  #ifndef USE_FREERTOS
+    spi_init();
+  #endif
  
    //set_uart_rx_handler(uart_event_handler);
  
    printf("\r\n\r\n--- Unified system per multi-responder ---\r\n");
    printf("Send 'INIT' for Initiator mode, 'RESP' for Responder mode\r\n");
-   printf("For help with all commands, send HELP via UART\r\n");
+   printf("For help with all commands, send HELP via UART  or SPI\r\n");
  
    //-------------dw1000  ini------------------------------------
  

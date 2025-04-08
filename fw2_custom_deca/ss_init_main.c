@@ -35,19 +35,23 @@
 /* Inter-ranging delay period, in milliseconds. */
 #define RNG_DELAY_MS 150
 
-/* Setting del dispositivo in funzione */
+/*
+// Setting del dispositivo in funzione 
 typedef enum {
   DEVICE_MODE_INITIATOR = 0,
   DEVICE_MODE_RESPONDER = 1
 } device_mode_t;
 
-/* Variabili esterne prese dal main */
+// Variabili esterne prese dal main 
 #define MAX_RESPONDERS 16 // da aggiornare anche sul main in caso di cambiamento
+
+
 extern volatile device_mode_t device_mode;
 extern volatile bool bool_mode_changed;
 extern volatile uint8_t anchor_ids[MAX_RESPONDERS];
 extern volatile uint8_t DEVICE_ID;
 extern volatile bool anchor_enabled[MAX_RESPONDERS];
+*/
 
 /* Setting globali validi per entrambe le modalitÃ  */
 //#define POLL_RX_TO_RESP_TX_DLY_UUS  2000
@@ -70,14 +74,16 @@ extern volatile bool anchor_enabled[MAX_RESPONDERS];
 #define ALL_MSG_DEST_ID_INDEX 8 // Indice da cui viene preso id del dispositivo nel messaggio inviato
 #define ALL_MSG_DEST_ID_IDX ALL_MSG_DEST_ID_INDEX
 
-/* Struttura e array in cui salvo informazioni dei risponditori */
+/*
+// Struttura e array in cui salvo informazioni dei risponditori 
 typedef struct {
   uint8_t id;
   bool valid;
   double distance;
 } responder_distance_t;
+*/
 
-static responder_distance_t distances[MAX_RESPONDERS]; // Vettore delle distanze per il dispositivo
+responder_distance_t distances[MAX_RESPONDERS]; // Vettore delle distanze per il dispositivo
 
 /* Interrupt flag */
 static volatile int tx_int_flag = 0; // Transmit success interrupt flag
