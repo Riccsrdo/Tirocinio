@@ -23,6 +23,7 @@ Una volta fatto questo sarà possibile effettuare una build del progetto, e per 
 
 Una volta effettuati questi passaggi dovrebbe essere possibile utilizzare il dispositivo con il firmware custom.
 
-## Ultimo aggiornamento - 5_04_25 13:40
-Attualmente il branch "main" è in pausa e sto lavorando sul branch secondario per testare la funzione di interrupt della comunicazione in caso di timeout. Per ora di fatto se un dispositivo non riceve e risponde subito al messaggio inviato dall'iniziatore il messaggio va perso e l'iniziatore rimane bloccato in attesa della risposta.
+## Ultimo aggiornamento - 8_04_25 13:05
+E' stato aggiunto il timeout alle comunicazioni avvenute via UWB, per cui se un dispositivo non ottiene risposta entro un certo periodo di tempo interrompe la comunicazione
+e passa al prossimo.
 
