@@ -27,11 +27,13 @@
 #include "deca_device_api.h"
 #include "deca_regs.h"
 #include "port_platform.h"
+#include "ss_init_main.h"
+#include "utils.h"
 
 #define APP_NAME "SS TWR INIT v1.3"
 
 /* Inter-ranging delay period, in milliseconds. */
-#define RNG_DELAY_MS 100
+#define RNG_DELAY_MS 150
 
 /* Setting del dispositivo in funzione */
 typedef enum {
@@ -47,11 +49,16 @@ extern volatile uint8_t anchor_ids[MAX_RESPONDERS];
 extern volatile uint8_t DEVICE_ID;
 extern volatile bool anchor_enabled[MAX_RESPONDERS];
 
-/* Setting globali validi per entrambe le modalità */
-#define POLL_RX_TO_RESP_TX_DLY_UUS  1100
+/* Setting globali validi per entrambe le modalitÃ  */
+//#define POLL_RX_TO_RESP_TX_DLY_UUS  2000
 #define RESP_TX_TO_FINAL_RX_DLY_UUS 500
 #define UUS_TO_DWT_TIME 65536
 #define SPEED_OF_LIGHT 299702547
+
+/* Impostazioni di timeout */
+#define MAX_TIMEOUT_COUNT 10
+#define DW1000_MAX_TIMEOUT_MS 65
+#define EXTENDED_TIMEOUT_MS 200
 
 /* Length of the common part of the message (up to and including the function code, see NOTE 1 below). */
 #define ALL_MSG_COMMON_LEN 10
@@ -72,6 +79,16 @@ typedef struct {
 
 static responder_distance_t distances[MAX_RESPONDERS]; // Vettore delle distanze per il dispositivo
 
+/* Interrupt flag */
+static volatile int tx_int_flag = 0; // Transmit success interrupt flag
+static volatile int rx_int_flag = 0; // receive success interrupt flag
+static volatile int to_int_flag = 0; // timeout interrupt flag
+static volatile int er_int_flag = 0; // error interrupt flag
+
+/*Transactions Counters */
+static volatile int tx_count = 0 ; // Successful transmit counter
+static volatile int rx_count = 0 ; // Successful receive counter 
+
 
 // -------------------- Initiator ------------------------------
 
@@ -90,13 +107,6 @@ static uint8 rx_buffer[RX_BUF_LEN];
 /* Hold copy of status register state here for reference so that it can be examined at a debug breakpoint. */
 static uint32 status_reg = 0;
 
-/* UWB microsecond (uus) to device time unit (dtu, around 15.65 ps) conversion factor.
-* 1 uus = 512 / 499.2 �s and 1 �s = 499.2 * 128 dtu. */
-#define UUS_TO_DWT_TIME 65536
-
-/* Speed of light in air, in metres per second. */
-#define SPEED_OF_LIGHT 299702547
-
 /* Hold copies of computed time of flight and distance here for reference so that it can be examined at a debug breakpoint. */
 static double tof;
 static double distance;
@@ -105,22 +115,24 @@ static double distance;
 static void resp_msg_get_ts(uint8 *ts_field, uint32 *ts);
 
 
-/*Transactions Counters */
-static volatile int tx_count = 0 ; // Successful transmit counter
-static volatile int rx_count = 0 ; // Successful receive counter 
 
 
 /*! ------------------------------------------------------------------------------------------------------------------
-* @fn main()
+* @fn ss_init_run()
 *
-* @brief Application entry point.
+* @brief Initiator function using interrupts
 *
 * @param  dev_id of the device to comunicate with
 *
 * @return none
 */
 int ss_init_run(uint8_t dev_id)
-{
+{ 
+  /* Reset interrupts flags*/
+  //tx_int_flag = 0;
+  //rx_int_flag = 0;
+  //to_int_flag = 0;
+  //er_int_flag = 0;
 
 
   // Imposto il valore dell'id del dispositivo con il quale voglio comunicare nel messaggio tx
@@ -128,19 +140,29 @@ int ss_init_run(uint8_t dev_id)
 
   /* Write frame data to DW1000 and prepare transmission. See NOTE 3 below. */
   tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
-  dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS);
+  //dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS);
   dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0); /* Zero offset in TX buffer. */
   dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1); /* Zero offset in TX buffer, ranging. */
 
   /* Start transmission, indicating that a response is expected so that reception is enabled automatically after the frame is sent and the delay
   * set by dwt_setrxaftertxdelay() has elapsed. */
   dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
-  tx_count++;
-  printf("Transmission to responder %d (#%d) \r\n",dev_id, tx_count);
+  //tx_count++;
+  
 
-
-  /* We assume that the transmission is achieved correctly, poll for reception of a frame or error/timeout. See NOTE 4 below. */
+  
+  /*
+  // We assume that the transmission is achieved correctly, poll for reception of a frame or error/timeout. See NOTE 4 below. *
   while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)))
+  { 
+  
+  };
+  */
+
+  
+
+  // Waiting for transmission success flag
+  while(!(tx_int_flag))
   {};
 
     #if 0  // include if required to help debug timeouts.
@@ -152,16 +174,33 @@ int ss_init_run(uint8_t dev_id)
     if(status_reg & SYS_STATUS_ALL_RX_ERR )
     temp =3;
     #endif
+   
+
+  if (tx_int_flag)
+  {
+    tx_count++;
+    printf("Transmission to responder %d (#%d) \r\n",dev_id, tx_count);
+
+    // Resetting tx interrupt flag
+    tx_int_flag = 0;
+
+  }
+
+  /* Wait for reception, timeout or error interrupt flag*/
+  while (!(rx_int_flag || to_int_flag|| er_int_flag))
+  {};
+
+  //printf("Flag rx_int_flag: %d\r\n", rx_int_flag);
 
   /* Increment frame sequence number after transmission of the poll message (modulo 256). */
   frame_seq_nb++;
 
-  if (status_reg & SYS_STATUS_RXFCG)
+  if (rx_int_flag)
   {		
     uint32 frame_len;
 
     /* Clear good RX frame event in the DW1000 status register. */
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG);
+    //dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG);
 
     /* A frame has been received, read it into the local buffer. */
     frame_len = dwt_read32bitreg(RX_FINFO_ID) & RX_FINFO_RXFLEN_MASK;
@@ -201,6 +240,9 @@ int ss_init_run(uint8_t dev_id)
       tof = ((rtd_init - rtd_resp * (1.0f - clockOffsetRatio)) / 2.0f) * DWT_TIME_UNITS; // Specifying 1.0f and 2.0f are floats to clear warning 
       distance = tof * SPEED_OF_LIGHT;
 
+      /* Resetting receive interrupt flag */
+      rx_int_flag = 0;
+
       distances[dev_id].id = dev_id;
       distances[dev_id].distance = distance;
       distances[dev_id].valid = true;
@@ -231,18 +273,15 @@ int ss_init_run(uint8_t dev_id)
       }
     }
   }
-  else
-  { 
-    printf("No response \r\n");
 
-    // Imposto la risposta come non valida per questo dispositivo
-    distances[dev_id].valid = false;
-
-    /* Clear RX error/timeout events in the DW1000 status register. */
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
-
+  if (to_int_flag || er_int_flag)
+  {
     /* Reset RX to properly reinitialise LDE operation. */
     dwt_rxreset();
+
+    /*Reseting interrupt flag*/
+    to_int_flag = 0 ;
+    er_int_flag = 0 ;
   }
 
   /* Execute a delay between ranging exchanges. */
@@ -250,6 +289,75 @@ int ss_init_run(uint8_t dev_id)
 
   //	return(1);
 }
+
+/*! ------------------------------------------------------------------------------------------------------------------
+* @fn rx_ok_cb()
+*
+* @brief Callback to process RX good frame events
+*
+* @param  cb_data  callback data
+*
+* @return  none
+*/
+void rx_ok_cb(const dwt_cb_data_t *cb_data)
+{
+  rx_int_flag = 1 ;
+  /* TESTING BREAKPOINT LOCATION #1 */
+}
+
+/*! ------------------------------------------------------------------------------------------------------------------
+* @fn rx_to_cb()
+*
+* @brief Callback to process RX timeout events
+*
+* @param  cb_data  callback data
+*
+* @return  none
+*/
+void rx_to_cb(const dwt_cb_data_t *cb_data)
+{
+  to_int_flag = 1 ;
+  /* TESTING BREAKPOINT LOCATION #2 */
+  printf("TimeOut\r\n");
+}
+
+/*! ------------------------------------------------------------------------------------------------------------------
+* @fn rx_err_cb()
+*
+* @brief Callback to process RX error events
+*
+* @param  cb_data  callback data
+*
+* @return  none
+*/
+void rx_err_cb(const dwt_cb_data_t *cb_data)
+{
+  er_int_flag = 1 ;
+  /* TESTING BREAKPOINT LOCATION #3 */
+  printf("Transmission Error : may receive package from different UWB device\r\n");
+}
+
+/*! ------------------------------------------------------------------------------------------------------------------
+* @fn tx_conf_cb()
+*
+* @brief Callback to process TX confirmation events
+*
+* @param  cb_data  callback data
+*
+* @return  none
+*/
+void tx_conf_cb(const dwt_cb_data_t *cb_data)
+{
+  /* This callback has been defined so that a breakpoint can be put here to check it is correctly called but there is actually nothing specific to
+  * do on transmission confirmation in this example. Typically, we could activate reception for the response here but this is automatically handled
+  * by DW1000 using DWT_RESPONSE_EXPECTED parameter when calling dwt_starttx().
+  * An actual application that would not need this callback could simply not define it and set the corresponding field to NULL when calling
+  * dwt_setcallbacks(). The ISR will not call it which will allow to save some interrupt processing time. */
+
+  tx_int_flag = 1 ;
+  /* TESTING BREAKPOINT LOCATION #4 */
+}
+
 
 /*! ------------------------------------------------------------------------------------------------------------------
 * @fn resp_msg_get_ts()
@@ -268,7 +376,7 @@ static void resp_msg_get_ts(uint8 *ts_field, uint32 *ts)
   *ts = 0;
   for (i = 0; i < RESP_MSG_TS_LEN; i++)
   {
-    *ts += ts_field[i] << (i * 8);
+  *ts += ts_field[i] << (i * 8);
   }
 }
 
@@ -299,19 +407,33 @@ static uint64 resp_tx_ts;
  * @return int Always returns 1
  */
 int ss_resp_run(uint8_t dev_id)
-{
+{   
+    
+    /* Reset interrupt flags for responder mode */
+    rx_int_flag = 0;
+    tx_int_flag = 0;
+    er_int_flag = 0;
+    to_int_flag = 0;
+
     /* Set our ID in the response message */
     tx_resp_msg[ALL_MSG_DEST_ID_IDX] = dev_id;
     
     /* Activate reception immediately. */
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
+    printf("Responder %d: Attendo pacchetti, status: 0x%08x\r\n", dev_id, dwt_read32bitreg(SYS_STATUS_ID));
+  
+    
+    // Attendo ricezione, errore o reset della task
+    while (!(rx_int_flag || er_int_flag || to_int_flag || bool_mode_changed)) {};
 
-    /* Poll for reception of a frame or error/timeout. */
-    while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)))
-    { };
+    if(bool_mode_changed){
+      return 1; // Ritorno dato che non devo più attendere risposte
+    }
+    
 
-    if (status_reg & SYS_STATUS_RXFCG)
-    {
+    if (rx_int_flag)
+    {   
+        printf("Responder %d: Ricevuto qualcosa, check del msg...\r\n", dev_id);
         uint32 frame_len;
 
         /* Clear good RX frame event in the DW1000 status register. */
@@ -341,8 +463,7 @@ int ss_resp_run(uint8_t dev_id)
 
             /* Compute final message transmission time. */
             resp_tx_time = (poll_rx_ts + (POLL_RX_TO_RESP_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
-            dwt_setdelayedtrxtime(resp_tx_time);
-
+            
             /* Response TX timestamp is the transmission time we programmed plus the antenna delay. */
             resp_tx_ts = (((uint64)(resp_tx_time & 0xFFFFFFFEUL)) << 8) + TX_ANT_DLY;
 
@@ -352,6 +473,9 @@ int ss_resp_run(uint8_t dev_id)
 
             /* Write and send the response message. */
             tx_resp_msg[ALL_MSG_SN_IDX] = resp_frame_seq_nb;
+
+            dwt_setdelayedtrxtime(resp_tx_time);
+
             dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0); /* Zero offset in TX buffer. */
             dwt_writetxfctrl(sizeof(tx_resp_msg), 0, 1); /* Zero offset in TX buffer, ranging. */
             ret = dwt_starttx(DWT_START_TX_DELAYED);
@@ -359,22 +483,50 @@ int ss_resp_run(uint8_t dev_id)
             /* If dwt_starttx() returns an error, abandon this ranging exchange and proceed to the next one. */
             if (ret == DWT_SUCCESS)
             {
-                printf("Response sent from anchor %d\r\n", dev_id);
-                /* Poll DW1000 until TX frame sent event set. */
-                while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS))
-                { };
+                
+                
+                // attendi completamento TX
+                tx_int_flag = 0;
+                while(!tx_int_flag && !bool_mode_changed) {};
 
-                /* Clear TXFRS event. */
-                dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS);
+                if(tx_int_flag){
+                  printf("Response sent from anchor %d\r\n", dev_id);
+                  resp_frame_seq_nb++;
+                }
+                else {
+                  printf("Transmission wait interrupted\r\n");
+                }
 
-                /* Increment frame sequence number after transmission of the poll message (modulo 256). */
-                resp_frame_seq_nb++;
+                
             }
             else
             {
-                printf("Error starting response transmission\r\n");
-                /* Reset RX to properly reinitialise LDE operation. */
-                dwt_rxreset();
+                printf("Error scheduling delayed transmission (error=%d)\r\n", ret);
+
+
+                 // provo trasmissione immediata
+                 dwt_forcetrxoff();
+
+                 ret = dwt_starttx(DWT_START_TX_IMMEDIATE);
+
+                 if (ret == DWT_SUCCESS){
+                    printf("Immediate transmission started\r\n");
+
+                    // wait for completition
+                    tx_int_flag = 0;
+                    while(!tx_int_flag && !bool_mode_changed) {};
+
+                    if(tx_int_flag){
+                       printf("Response sent\r\n");
+                       resp_frame_seq_nb++;
+                    }
+                 } else {
+                    printf("Could not start immediate transmission\r\n");
+                    /* Reset RX to properly reinitialise LDE operation. */
+                    dwt_rxreset();
+                 }
+
+                
             }
         }
         else
@@ -382,14 +534,28 @@ int ss_resp_run(uint8_t dev_id)
             printf("Ignoring poll not addressed to us (our ID: %d, request ID: %d)\r\n", 
                  dev_id, rx_buffer[ALL_MSG_DEST_ID_IDX]);
         }
-    }
-    else
-    {
-        /* Clear RX error/timeout events in the DW1000 status register. */
-        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
 
-        /* Reset RX to properly reinitialise LDE operation. */
-        dwt_rxreset();
+        /* Reset reception interrupt flag */
+        rx_int_flag = 0;
+    }
+    if (er_int_flag){
+      printf("Error receiving data \r\n");
+
+      dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR);
+
+      dwt_rxreset();
+
+      er_int_flag = 0;
+    }
+
+    if(to_int_flag){
+      printf("Timeout receiving data as responder\r\n");
+
+      dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO);
+
+      dwt_rxreset();
+
+      to_int_flag = 0;
     }
 
     return 1;
@@ -431,6 +597,77 @@ static void resp_msg_set_ts(uint8 *ts_field, const uint64 ts)
 
 
 
+/**@brief SS TWR Initiator task entry function.
+*
+* @param[in] pvParameter   Pointer that will be used as the parameter for the task.
+*/
+void ss_initiator_task_function (void * pvParameter)
+{
+  UNUSED_PARAMETER(pvParameter);
+
+  dwt_setleds(DWT_LEDS_ENABLE);
+
+  int i = 0;
+
+  while (true)
+  { 
+    /*
+    while(i<MAX_RESPONDERS){
+      if(anchor_enabled[i] && i!= DEVICE_ID) ss_init_run(i);
+      i++;
+      vTaskDelay(10);
+    }
+    i=0;
+    //ss_init_run(1);
+    /* Delay a task for a given number of ticks */
+    //vTaskDelay(RNG_DELAY_MS);
+    /* Tasks must be implemented to never return... */
+
+    // Run appropriate function based on current mode
+    if (device_mode == DEVICE_MODE_INITIATOR) {
+          //printf("entro qui\r\n");
+          // Communicate with all enabled responders in sequence
+          for (int i = 0; i < MAX_RESPONDERS; i++) {
+              if (anchor_enabled[i] && i != DEVICE_ID) {
+                  ss_init_run(i);
+                  vTaskDelay(RNG_DELAY_MS); // Small delay between anchors
+              }
+          }
+        
+    } else {
+        // Responder mode - respond using our anchor ID
+        ss_resp_run(DEVICE_ID);
+    }
+
+    // Check if mode has changed
+    if (bool_mode_changed) {
+        // Reset device state for new mode
+        if (device_mode == DEVICE_MODE_INITIATOR) {
+            // Initiator specific setup
+            dwt_setrxtimeout(65000); // Maximum value timeout with DW1000 is 65ms
+            dwt_setrxaftertxdelay(POLL_RX_TO_RESP_TX_DLY_UUS);
+            printf("Switched to INITIATOR mode\r\n");
+        } else {
+            // Responder specific setup
+            dwt_setrxtimeout(0); // set to NO receive timeout for responder
+            printf("Switched to RESPONDER mode\r\n");
+        }
+        
+        // Reset reception
+        dwt_rxreset();
+        
+        // Reset distance tracking
+        for (int i = 0; i < MAX_RESPONDERS; i++) {
+            distances[i].distance = 0.0;
+            distances[i].valid = false;
+        }
+        
+        bool_mode_changed = false;
+    }
+  }
+}
+
+
 /**
  * @brief Main task function that calls either initiator or responder based on mode
  * 
@@ -458,9 +695,27 @@ void ss_main_task_function(void * pvParameter)
         // Responder specific setup
         dwt_setrxtimeout(0); // set to NO receive timeout for responder
     }
+
+    printf("Arrivo qui\r\n");
     
     while (true)
     {
+        // Run appropriate function based on current mode
+        if (device_mode == DEVICE_MODE_INITIATOR) {
+              printf("entro qui\r\n");
+              // Communicate with all enabled responders in sequence
+              for (int i = 0; i < MAX_RESPONDERS; i++) {
+                  if (anchor_enabled[i] && i != DEVICE_ID) {
+                      ss_init_run(i);
+                      vTaskDelay(RNG_DELAY_MS); // Small delay between anchors
+                  }
+              }
+            
+        } else {
+            // Responder mode - respond using our anchor ID
+            ss_resp_run(DEVICE_ID);
+        }
+
         // Check if mode has changed
         if (bool_mode_changed) {
             // Reset device state for new mode
@@ -487,20 +742,6 @@ void ss_main_task_function(void * pvParameter)
             bool_mode_changed = false;
         }
         
-        // Run appropriate function based on current mode
-        if (device_mode == DEVICE_MODE_INITIATOR) {
-              // Communicate with all enabled responders in sequence
-              for (int i = 0; i < MAX_RESPONDERS; i++) {
-                  if (anchor_enabled[i]) {
-                      ss_init_run(i);
-                      vTaskDelay(10); // Small delay between anchors
-                  }
-              }
-            
-        } else {
-            // Responder mode - respond using our anchor ID
-            ss_resp_run(DEVICE_ID);
-        }
         
         /* Delay between operations */
         vTaskDelay(RNG_DELAY_MS);
