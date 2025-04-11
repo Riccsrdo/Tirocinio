@@ -1,3 +1,4 @@
+.vscode
 # ignora cartelle
 grafici/
 ex-lib/
@@ -6,5 +7,3 @@ ex-lib/
 *.exe
 *.o
 
-# ignora file in .vscode
-.vscode
