@@ -23,7 +23,6 @@ Una volta fatto questo sarà possibile effettuare una build del progetto, e per 
 
 Una volta effettuati questi passaggi dovrebbe essere possibile utilizzare il dispositivo con il firmware custom.
 
-## Ultimo aggiornamento - 8_04_25 13:05
-E' stato aggiunto il timeout alle comunicazioni avvenute via UWB, per cui se un dispositivo non ottiene risposta entro un certo periodo di tempo interrompe la comunicazione
-e passa al prossimo.
+## Ultimo aggiornamento - 11_04 8:25
+Continuano i lavori di aggiunta della comunicazione SPI, ancora da testare.
 
