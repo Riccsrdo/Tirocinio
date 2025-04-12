@@ -12,6 +12,13 @@ Una volta sostituiti i file è possibile aprire il progetto SEGGER collocandosi 
 - sostituire nel file nrf52.h alla linea 146 l'include con il seguente: #include "toolchain/cmsis/include/core_cm4.h"
 - sostituire nel file retarget.c alla linea 112 la dicitura File * con __printf_tag_ptr
 
+Per far funzionare SPI, inoltre, è necessario:
+1) Aprire il file sdk_config.h
+2) Cercare le diciture di definizione SPI
+    1) Modificare SPIS_ENABLED a 1
+    2) Modificare SPIS2_ENABLED a 1
+Così facendo il dispositivo può essere configurato in modalità slave, così da permettere la comunicazione con un master.
+
 Ogni dispositivo sarà configurabile tramite SPI in futuro. [TBU]
 
 Una volta fatto questo sarà possibile effettuare una build del progetto, e per farlo occorrerà:
@@ -23,6 +30,8 @@ Una volta fatto questo sarà possibile effettuare una build del progetto, e per 
 
 Una volta effettuati questi passaggi dovrebbe essere possibile utilizzare il dispositivo con il firmware custom.
 
-## Ultimo aggiornamento - 11_04 8:25
-Continuano i lavori di aggiunta della comunicazione SPI, ancora da testare.
+## Ultimo aggiornamento - 12_04 15:30
+Continua la configurazione di SPI, sto fixando alcuni problemi per cui non veniva configurato bene tutto di SPI, per farlo è stato necessario modificare il file sdk_config.h abilitando esplicitamente la comunicazione SPIS (SPI Slave) per il canale 2 di SPI, lasciando le altre configurazioni come stanno.
+Inoltre, ho aggiunto il polling di dati SPI anche in modalità responder quando è in attesa di ricevere poll dall'iniziatore.
+
 

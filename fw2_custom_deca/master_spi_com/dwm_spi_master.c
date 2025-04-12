@@ -1,4 +1,4 @@
-#include "dwm_spi_master_rpi.h"
+#include "dwm_spi_master.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -10,7 +10,7 @@
 
 // Variabili statiche per la gestione del device SPI
 static int spi_fd = -1; // File descriptor per il device SPI
-static uint8_t spi_mode = 0;
+static uint8_t spi_mode = 2;
 static uint8_t spi_bits = 8;
 static uint32_t spi_speed = 2000000; // Default 2 MHz
 

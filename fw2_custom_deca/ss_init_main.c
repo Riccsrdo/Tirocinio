@@ -27,7 +27,7 @@
 #include "deca_device_api.h"
 #include "deca_regs.h"
 #include "port_platform.h"
-#include "ss_init_main.h"
+//#include "ss_init_main.h"
 #include "utils.h"
 
 #define APP_NAME "SS TWR INIT v1.3"
@@ -67,7 +67,7 @@ responder_distance_t distances[MAX_RESPONDERS];
 
 /* Setting globali validi per entrambe le modalitÃ  */
 //#define POLL_RX_TO_RESP_TX_DLY_UUS  2000
-#define RESP_TX_TO_FINAL_RX_DLY_UUS 500
+//#define RESP_TX_TO_FINAL_RX_DLY_UUS 500
 #define UUS_TO_DWT_TIME 65536
 #define SPEED_OF_LIGHT 299702547
 
@@ -430,9 +430,20 @@ int ss_resp_run(uint8_t dev_id)
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
     printf("Responder %d: Attendo pacchetti, status: 0x%08x\r\n", dev_id, dwt_read32bitreg(SYS_STATUS_ID));
   
+    const uint32_t MAX_WAIT_TIME = 500; // Millisecondi
+    uint32_t elapsed_time = 0;
     
     // Attendo ricezione, errore o reset della task
-    while (!(rx_int_flag || er_int_flag || to_int_flag || bool_mode_changed)) {};
+    while (!(rx_int_flag || er_int_flag || to_int_flag || bool_mode_changed)) 
+    {
+      nrf_delay_ms(10);
+      elapsed_time += 10;
+    
+      if (elapsed_time >= MAX_WAIT_TIME) {
+          // Timeout raggiunto, torna al loop principale
+          return 1;
+      }
+    };
 
     if(bool_mode_changed){
       return 1; // Ritorno dato che non devo più attendere risposte

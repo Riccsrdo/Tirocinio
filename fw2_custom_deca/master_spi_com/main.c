@@ -7,7 +7,7 @@
 // Definizione del device SPI da usare (SPI0, Chip Select 0)
 #define SPI_DEVICE "/dev/spidev0.0"
 #define SPI_SPEED 2000000 // 2 MHz
-#define SPI_MODE 0
+#define SPI_MODE 2
 
 // Array per memorizzare i dati delle distanze
 ResponderInfo distance_data[MAX_DWM_RESPONDERS];

@@ -20,7 +20,8 @@
  #include "nrf_drv_clock.h"
  //#include "nrf_drv_spi.h"
  //#include "../components/drivers_nrf/spi_slave/nrf_drv_spis.h"
- #include "nRF5_SDK_14.2.0\components\drivers_nrf\spi_slave/nrf_drv_spis.h"
+ //#include "nRF5_SDK_14.2.0\components\drivers_nrf\spi_slave/nrf_drv_spis.h"
+ #include "nRF5_SDK_14.2.0/components/drivers_nrf/spi_slave/nrf_drv_spis.h"
  #include "nrf_uart.h"
  #include "app_util_platform.h"
  #include "nrf_gpio.h"
@@ -117,15 +118,15 @@
 
  /*-------------------------------SPI--------------------------------*/
 
- #define SPIS_INSTANCE 1 // Uso di default SPI 1, in quanto lo 0 potrebbe essere occupato
+ #define SPIS_INSTANCE 2 
  static const nrf_drv_spis_t m_spis = NRF_DRV_SPIS_INSTANCE(SPIS_INSTANCE); // < SPIS instance.
 
 
  // Pin
-#define SPIS_CSN_PIN    NRF_GPIO_PIN_MAP(0, 28) // Modulo Pin 29 -> Connettore Pin 24 (CS_RPI)
-#define SPIS_SCK_PIN    NRF_GPIO_PIN_MAP(0, 8)  // Modulo Pin 25 -> Connettore Pin 23 (SPI1_CLK) <- NOTA: usa P0.08!
-#define SPIS_MOSI_PIN   NRF_GPIO_PIN_MAP(0, 30) // Modulo Pin 27 -> Connettore Pin 19 (SPI1_MOSI)
-#define SPIS_MISO_PIN   NRF_GPIO_PIN_MAP(0, 31) // Modulo Pin 26 -> Connettore Pin 21 (SPI1_MISO)
+#define MY_SPIS_CSN_PIN    NRF_GPIO_PIN_MAP(0, 28) // Modulo Pin 29 -> Connettore Pin 24 (CS_RPI)
+#define MY_SPIS_SCK_PIN    NRF_GPIO_PIN_MAP(0, 8)  // Modulo Pin 25 -> Connettore Pin 23 (SPI1_CLK) <- NOTA: usa P0.08!
+#define MY_SPIS_MOSI_PIN   NRF_GPIO_PIN_MAP(0, 30) // Modulo Pin 27 -> Connettore Pin 19 (SPI1_MOSI)
+#define MY_SPIS_MISO_PIN   NRF_GPIO_PIN_MAP(0, 31) // Modulo Pin 26 -> Connettore Pin 21 (SPI1_MISO)
 
  // Dimensione buffer per ricezione/invio dati dal/al master
  #define SPI_CMD_BUFFER_SIZE 32 // Max command length from master
@@ -546,6 +547,7 @@ static void process_spi_command(uint8_t *cmd_data, uint8_t cmd_len)
             if (device_mode != DEVICE_MODE_INITIATOR) {
                 device_mode = DEVICE_MODE_INITIATOR;
                 bool_mode_changed = true; // Signal UWB logic in main loop
+                printf("Cambiamento modalità a Iniziatore!\r\n");
             }
             break;
 
@@ -553,6 +555,7 @@ static void process_spi_command(uint8_t *cmd_data, uint8_t cmd_len)
              if (device_mode != DEVICE_MODE_RESPONDER) {
                 device_mode = DEVICE_MODE_RESPONDER;
                 bool_mode_changed = true; // Signal UWB logic
+                printf("Cambiamento modalità a Responder!\r\n");
             }
             break;
 
@@ -603,7 +606,8 @@ Funzione che gestisce eventi SPI con interrupt.
 static void spis_event_handler(nrf_drv_spis_event_t event)
 {
     if (event.evt_type == NRF_DRV_SPIS_XFER_DONE)
-    {
+    {   
+        printf("SPI XFER DONE, RX bytes: %d\r\n", event.rx_amount);
         // Check if there are incoming commands
         if (!new_spi_command_received)
         {
@@ -631,11 +635,11 @@ Funzione che inizializza dispositivo come slave SPI
 static void spi_slave_init(void)
 {
     nrf_drv_spis_config_t spis_config = NRF_DRV_SPIS_DEFAULT_CONFIG;
-    spis_config.csn_pin   = SPI_CSN_PIN;
-    spis_config.miso_pin  = SPI_MISO_PIN;
-    spis_config.mosi_pin  = SPI_MOSI_PIN;
-    spis_config.sck_pin   = SPI_SCK_PIN;
-    spis_config.mode      = NRF_DRV_SPIS_MODE_0;
+    spis_config.csn_pin   = MY_SPIS_CSN_PIN;
+    spis_config.miso_pin  = MY_SPIS_MISO_PIN;
+    spis_config.mosi_pin  = MY_SPIS_MOSI_PIN;
+    spis_config.sck_pin   = MY_SPIS_SCK_PIN;
+    spis_config.mode      = NRF_DRV_SPIS_MODE_2;
     spis_config.bit_order = NRF_DRV_SPIS_BIT_ORDER_MSB_FIRST;
     spis_config.irq_priority = APP_IRQ_PRIORITY_LOW;
 
@@ -681,8 +685,9 @@ static void spi_slave_init(void)
    nrf_drv_clock_lfclk_request(NULL);
 
    /* Initialize SPI Slave */
-    //spi_slave_init();
-   printf("SPI Inizializzato!\r\n");
+   spi_slave_init();
+   //printf("SPI Inizializzato!\r\n");
+   //nrf_delay_ms(1000);
  
    //set_uart_rx_handler(uart_event_handler);
  
@@ -736,6 +741,10 @@ static void spi_slave_init(void)
     dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
     dwt_setrxtimeout(65000); // Maximum value timeout with DW1000 is 65ms 
    }
+   else{
+    //dwt_setrxaftertxdelay(POLL_RX_TO_RESP_TX_DLY_UUS);
+    //dwt_setrxtimeout(65000);
+   }
    
  
    //-------------dw1000  ini------end---------------------------
@@ -774,7 +783,9 @@ static void spi_slave_init(void)
     /* Tasks must be implemented to never return... */
 
     // Controllo la ricezione di comandi SPI
+        printf("Inizio raccolta dati SPI\r\n");
         if (new_spi_command_received) {
+            printf("SPI CMD Received: 0x%02X (len %d)\r\n", spi_cmd_buffer[0], spi_cmd_length);
             uint8_t local_cmd_buf[SPI_CMD_BUFFER_SIZE];
             uint8_t local_cmd_len = 0;
 
@@ -804,6 +815,7 @@ static void spi_slave_init(void)
         }
 
         // --- 2. Handle UWB Mode Switching ---
+        printf("Gestisco cambio di modalità\r\n");
         if (bool_mode_changed) {
              printf("Mode change detected.");
              // Reset device state for new mode
@@ -829,6 +841,7 @@ static void spi_slave_init(void)
         }
 
         // --- 3. Perform UWB Ranging ---
+        printf("Gestisco misurazioni\r\n");
         if (device_mode == DEVICE_MODE_INITIATOR) {
             // Cycle through enabled anchors
             for (int i = 0; i < MAX_RESPONDERS; i++) {
