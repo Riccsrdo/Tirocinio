@@ -31,6 +31,7 @@ extern volatile uint8_t anchor_ids[MAX_RESPONDERS];
 extern volatile uint8_t DEVICE_ID;
 extern volatile bool anchor_enabled[MAX_RESPONDERS];
 extern responder_distance_t distances[MAX_RESPONDERS];
+extern volatile bool new_spi_command_received;
 
 /* Dichiarazioni delle funzioni condivise */
 extern int ss_init_run(uint8_t anchor_id);

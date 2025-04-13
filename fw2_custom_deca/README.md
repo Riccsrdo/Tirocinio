@@ -30,8 +30,8 @@ Una volta fatto questo sarà possibile effettuare una build del progetto, e per 
 
 Una volta effettuati questi passaggi dovrebbe essere possibile utilizzare il dispositivo con il firmware custom.
 
-## Ultimo aggiornamento - 12_04 15:30
-Continua la configurazione di SPI, sto fixando alcuni problemi per cui non veniva configurato bene tutto di SPI, per farlo è stato necessario modificare il file sdk_config.h abilitando esplicitamente la comunicazione SPIS (SPI Slave) per il canale 2 di SPI, lasciando le altre configurazioni come stanno.
-Inoltre, ho aggiunto il polling di dati SPI anche in modalità responder quando è in attesa di ricevere poll dall'iniziatore.
+## Ultimo aggiornamento - 13_04 17:10
+La configurazione SPI per inizializzare il dispositivo come Slave è ultimata. Sono attivi alcuni comandi base come quelli che permettono di cambiare modalità di ranging, successivamente verranno aggiunti altri comandi di utilità che permettono di ottenere bene le distanze via SPI.
+
 
 

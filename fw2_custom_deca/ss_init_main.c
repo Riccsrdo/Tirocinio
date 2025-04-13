@@ -429,23 +429,22 @@ int ss_resp_run(uint8_t dev_id)
     /* Activate reception immediately. */
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
     printf("Responder %d: Attendo pacchetti, status: 0x%08x\r\n", dev_id, dwt_read32bitreg(SYS_STATUS_ID));
-  
-    const uint32_t MAX_WAIT_TIME = 500; // Millisecondi
-    uint32_t elapsed_time = 0;
+ 
     
     // Attendo ricezione, errore o reset della task
-    while (!(rx_int_flag || er_int_flag || to_int_flag || bool_mode_changed)) 
-    {
-      nrf_delay_ms(10);
-      elapsed_time += 10;
-    
-      if (elapsed_time >= MAX_WAIT_TIME) {
-          // Timeout raggiunto, torna al loop principale
-          return 1;
-      }
+    while (!(rx_int_flag || er_int_flag || to_int_flag || bool_mode_changed || new_spi_command_received)) 
+    { 
+      
     };
 
+    if (new_spi_command_received) {
+        printf("Responder %d: Comando SPI ricevuto durante attesa UWB, ritorno al main loop.\r\n", dev_id);
+        dwt_forcetrxoff(); // Disabilita transceiver DW1000 per sicurezza prima di uscire
+        return 1; // Ritorna al main loop che gestirà il comando SPI
+    }
+
     if(bool_mode_changed){
+      dwt_forcetrxoff();
       return 1; // Ritorno dato che non devo più attendere risposte
     }
     

@@ -1,3 +1,4 @@
+
 /* Copyright (c) 2015 Nordic Semiconductor. All Rights Reserved.
  *
  * The information contained herein is property of Nordic Semiconductor ASA.
@@ -139,7 +140,7 @@
  // Variabili per il buffer di comandi
  static uint8_t spi_cmd_buffer[SPI_CMD_BUFFER_SIZE]; // Separate buffer to copy cmd into
  static volatile uint8_t spi_cmd_length = 0;         // Length of command in spi_cmd_buffer
- static volatile bool new_spi_command_received = false; // Flag for newly received SPI command
+ volatile bool new_spi_command_received = false; // Flag for newly received SPI command
 
  // Comandi possibili inviabili via SPI
  #define SPI_CMD_GET_DISTANCES 0x01 // Permette di ottenere le distanze
@@ -605,6 +606,7 @@ Funzione che gestisce eventi SPI con interrupt.
 */
 static void spis_event_handler(nrf_drv_spis_event_t event)
 {
+    printf("SPI HANDLER TRIGGERED! RX bytes: %d\r\n", event.rx_amount);
     if (event.evt_type == NRF_DRV_SPIS_XFER_DONE)
     {   
         printf("SPI XFER DONE, RX bytes: %d\r\n", event.rx_amount);
@@ -635,10 +637,10 @@ Funzione che inizializza dispositivo come slave SPI
 static void spi_slave_init(void)
 {
     nrf_drv_spis_config_t spis_config = NRF_DRV_SPIS_DEFAULT_CONFIG;
-    spis_config.csn_pin   = MY_SPIS_CSN_PIN;
-    spis_config.miso_pin  = MY_SPIS_MISO_PIN;
-    spis_config.mosi_pin  = MY_SPIS_MOSI_PIN;
-    spis_config.sck_pin   = MY_SPIS_SCK_PIN;
+    spis_config.csn_pin   = 3; //MY_SPIS_CSN_PIN;
+    spis_config.miso_pin  = 7; //MY_SPIS_MISO_PIN;
+    spis_config.mosi_pin  = 6; // MY_SPIS_MOSI_PIN;
+    spis_config.sck_pin   = 4; // MY_SPIS_SCK_PIN;
     spis_config.mode      = NRF_DRV_SPIS_MODE_2;
     spis_config.bit_order = NRF_DRV_SPIS_BIT_ORDER_MSB_FIRST;
     spis_config.irq_priority = APP_IRQ_PRIORITY_LOW;
@@ -743,7 +745,7 @@ static void spi_slave_init(void)
    }
    else{
     //dwt_setrxaftertxdelay(POLL_RX_TO_RESP_TX_DLY_UUS);
-    //dwt_setrxtimeout(65000);
+    dwt_setrxtimeout(0);
    }
    
  
@@ -783,7 +785,7 @@ static void spi_slave_init(void)
     /* Tasks must be implemented to never return... */
 
     // Controllo la ricezione di comandi SPI
-        printf("Inizio raccolta dati SPI\r\n");
+        //printf("Inizio raccolta dati SPI\r\n");
         if (new_spi_command_received) {
             printf("SPI CMD Received: 0x%02X (len %d)\r\n", spi_cmd_buffer[0], spi_cmd_length);
             uint8_t local_cmd_buf[SPI_CMD_BUFFER_SIZE];
@@ -809,23 +811,23 @@ static void spi_slave_init(void)
 
                  // Prepare the response buffer for the *next* transaction
                  prepare_spi_response(current_spi_command);
-                 printf("SPI Response prepared.");
+                 printf("SPI Response prepared.\r\n");
                  //NRF_LOG_FLUSH();
             }
         }
 
         // --- 2. Handle UWB Mode Switching ---
-        printf("Gestisco cambio di modalità\r\n");
+        //printf("Gestisco cambio di modalità\r\n");
         if (bool_mode_changed) {
-             printf("Mode change detected.");
+             printf("Mode change detected.\r\n");
              // Reset device state for new mode
              if (device_mode == DEVICE_MODE_INITIATOR) {
                  dwt_setrxtimeout(65000);
                  dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
-                 printf("Switched to INITIATOR mode");
+                 printf("Switched to INITIATOR mode\r\n");
              } else {
                  dwt_setrxtimeout(0);
-                 printf("Switched to RESPONDER mode (ID: %d)", DEVICE_ID);
+                 printf("Switched to RESPONDER mode (ID: %d)\r\n", DEVICE_ID);
              }
              dwt_rxreset(); // Reset reception
 
@@ -841,9 +843,10 @@ static void spi_slave_init(void)
         }
 
         // --- 3. Perform UWB Ranging ---
-        printf("Gestisco misurazioni\r\n");
+        //printf("Gestisco misurazioni\r\n");
         if (device_mode == DEVICE_MODE_INITIATOR) {
             // Cycle through enabled anchors
+            printf("Inizio misurazioni\r\n");
             for (int i = 0; i < MAX_RESPONDERS; i++) {
                 if (anchor_enabled[i] && i != DEVICE_ID) {
                     LEDS_INVERT(BSP_LED_1_MASK); // Activity indicator
