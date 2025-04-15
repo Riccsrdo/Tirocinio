@@ -45,8 +45,8 @@
  //#include "UART.h"
  
  /* Dichiaro in precedenza le funzioni che dovrÃ² usare successivamente */
- extern int ss_init_run(uint8_t anchor_id);           // Funzione per utilizzo come iniziatore comunicazione
- extern int ss_resp_run(uint8_t anchor_id);           // Funzione per utilizzo come risponditore comunicazione
+ extern int ss_init_run(uint64_t anchor_id);           // Funzione per utilizzo come iniziatore comunicazione
+ extern int ss_resp_run(uint64_t anchor_id);           // Funzione per utilizzo come risponditore comunicazione
  extern void ss_main_task_function(void *pvParameter); // Funzione per gestione task
  extern void ss_initiator_task_function(void *pvParameter);
 
@@ -103,15 +103,15 @@
  #define MAX_RESPONDERS 16 // da aggiornare anche su ss_init_main.c in caso di cambiamento
  #endif
  
- volatile device_mode_t device_mode = DEVICE_MODE_RESPONDER; /* Imposto modalitÃ  iniziale come iniziatore */
+ volatile device_mode_t device_mode = DEVICE_MODE_INITIATOR; /* Imposto modalitÃ  iniziale come iniziatore */
  volatile bool bool_mode_changed = false;                         /* Flag booleana per inidicare che la modalitÃ  Ã¨ cambiata */
  
  /* Impostazioni modalitÃ  multi-risponditore
  Configurare in base al numero di risponditori utilizzati */
 
- volatile uint8_t anchor_ids[MAX_RESPONDERS] = {0, 1, 2, 3, 4, 5, 6, 7, 8,
+ volatile uint64_t anchor_ids[MAX_RESPONDERS] = {0, 1, 2, 3, 4, 5, 6, 7, 8,
                                                            9, 10, 11, 12, 13, 14, 15}; /* ID dei risponditori */
- volatile uint8_t DEVICE_ID = 1; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
+ volatile uint64_t DEVICE_ID = 0; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
  volatile bool anchor_enabled[MAX_RESPONDERS] = {true, true, true, false, false, false, false, false,
                                                         false, false, false, false, false, false, false, false}; /* Abilitazione dei risponditori */
  
@@ -755,7 +755,10 @@ static void spi_slave_init(void)
  
    printf("Starting in %s mode \r\n", device_mode == DEVICE_MODE_INITIATOR ? "Initiator" : "Responder");
    if(device_mode == DEVICE_MODE_RESPONDER){
-     printf("Device id: %d \r\n", DEVICE_ID);
+    uint32_t id_alta = (uint32_t)(DEVICE_ID >> 32);
+    uint32_t id_bassa = (uint32_t)(DEVICE_ID & 0xFFFFFFFFUL); // o solo (uint32_t)DEVICE_ID
+    // Stampa le due parti in esadecimale, 8 cifre ciascuna con padding
+    printf("Device id: %08lX%08lX \r\n", id_alta, id_bassa);
    }
 
    uint8_t current_spi_command = 0; // Store command being processed

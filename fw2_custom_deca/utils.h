@@ -19,7 +19,7 @@ typedef enum
 
 /* Struttura dati per memorizzare informazioni sui risponditori */
 typedef struct {
-  uint8_t id;
+  uint64_t id;
   bool valid;
   double distance;
 } responder_distance_t;
@@ -27,15 +27,15 @@ typedef struct {
 /* Dichiarazioni delle variabili condivise */
 extern volatile device_mode_t device_mode;
 extern volatile bool bool_mode_changed;
-extern volatile uint8_t anchor_ids[MAX_RESPONDERS];
-extern volatile uint8_t DEVICE_ID;
+extern volatile uint64_t anchor_ids[MAX_RESPONDERS];
+extern volatile uint64_t DEVICE_ID;
 extern volatile bool anchor_enabled[MAX_RESPONDERS];
 extern responder_distance_t distances[MAX_RESPONDERS];
 extern volatile bool new_spi_command_received;
 
 /* Dichiarazioni delle funzioni condivise */
-extern int ss_init_run(uint8_t anchor_id);
-extern int ss_resp_run(uint8_t anchor_id);
+extern int ss_init_run(uint64_t anchor_id);
+extern int ss_resp_run(uint64_t anchor_id);
 extern void ss_main_task_function(void *pvParameter);
 extern void ss_initiator_task_function(void *pvParameter);
 

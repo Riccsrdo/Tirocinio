@@ -76,13 +76,35 @@ responder_distance_t distances[MAX_RESPONDERS];
 #define DW1000_MAX_TIMEOUT_MS 65
 #define EXTENDED_TIMEOUT_MS 200
 
+/*
+Nuova struttura per supportare id a 64 bit:
+Byte 0-1: Frame Control
+Byte 2: Sequence Number
+Byte 3-4: PAN ID 
+Byte 5-6: Destination address
+Byte 7-8: Source address
+Byte 9: Function code (E0 per poll, E1 per resp)
+Byte 10-17: ID del dispositivo target (per Poll) o sorgente (per Resp)
+Byte 18-21: Timestamp poll rx (solo in Resp)
+Byte 22-25: Timestamp Resp TX (solo in Resp)
+Byte 26-27: Checksum (automatico)
+
+
+*/
+
 /* Length of the common part of the message (up to and including the function code, see NOTE 1 below). */
-#define ALL_MSG_COMMON_LEN 10
+#define ALL_MSG_COMMON_LEN_OLD 10
 /* Indexes to access some of the fields in the frames defined above. */
+#define ID_LEN 8 // Lunghezza degli ID sotto forma di 8 byte
+#define ALL_MSG_FC_IDX 9 // indice function code
+#define ALL_MSG_ID_START_IDX 10 // indice di partenza dell'id nel messaggio
 #define ALL_MSG_SN_IDX 2
-#define RESP_MSG_POLL_RX_TS_IDX 10
-#define RESP_MSG_RESP_TX_TS_IDX 14
 #define RESP_MSG_TS_LEN 4
+#define RESP_MSG_POLL_RX_TS_IDX (ALL_MSG_ID_START_IDX + ID_LEN) // nuovo indice di partenza Timestamp
+#define RESP_MSG_RESP_TX_TS_IDX (RESP_MSG_POLL_RX_TS_IDX + RESP_MSG_TS_LEN) // Nuovo indice Timestamp 2
+#define ALL_MSG_COMMON_LEN (ALL_MSG_ID_START_IDX) // lunghezza fino a prima dell'id
+#define POLL_FRAME_LEN (ALL_MSG_ID_START_IDX + ID_LEN + 2) // lunghezza poll: common + id + checksum
+#define RESP_FRAME_LEN (RESP_MSG_RESP_TX_TS_IDX + RESP_MSG_TS_LEN + 2) // len resp: fino a t2 + checksum 
 #define ALL_MSG_DEST_ID_INDEX 8 // Indice da cui viene preso id del dispositivo nel messaggio inviato
 #define ALL_MSG_DEST_ID_IDX ALL_MSG_DEST_ID_INDEX
 
@@ -98,18 +120,49 @@ static volatile int tx_count = 0 ; // Successful transmit counter
 static volatile int rx_count = 0 ; // Successful receive counter 
 
 
+// Funzioni di utilità per convertire uint64 in 8 byte
+static inline void uint64_to_bytes(uint64_t val, uint8_t *bytes) {
+  memcpy(bytes, &val, sizeof(uint64_t));
+}
+
+static inline uint64_t bytes_to_uint64(const uint8_t* bytes){
+  uint64_t val;
+  memcpy(&val, bytes, sizeof(uint64_t));
+  return val;
+}
+
+
 // -------------------- Initiator ------------------------------
 
+
+
 /* Frames used in the ranging process. See NOTE 1,2 below. */
-static uint8 tx_poll_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'D', 'E', 'V', 1, 0xE0, 0, 0};
-static uint8 rx_resp_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'V', 'E', 'D', 1, 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static uint8 tx_poll_msg[] = {0x41, 0x88, // Frame control
+                              0, // Sequence number
+                              0xCA, 0xDE, // PAN ID
+                              'D', 'E',  // Destination address
+                              'V', 1, // Source address
+                              0xE0, // Function code
+                              0, 0, 0, 0, 0, 0, 0, 0 // Placeholder 8 byte per ID
+                              }; // Grandezza = 18 ( POLL_FRAME_LEN -2)
+      
+static uint8 rx_resp_msg[] = {0x41, 0x88, // Frame control
+                              0, // sequence number
+                              0xCA, 0xDE, // PAN ID
+                              'V', 1, // Source address
+                              'D', 'E',  // Destination address
+                              0xE1, // Function code
+                              0, 0, 0, 0, 0, 0, 0, 0, // Placeholder per ID
+                              0, 0, 0, 0, // POLL RX TS
+                              0, 0, 0, 0 // RESP TX TS
+                              }; // Grandezza = 26 (RESP_FRAME_LEN - 2)
 
 /* Frame sequence number, incremented after each transmission. */
 static uint8 frame_seq_nb = 0;
 
 /* Buffer to store received response message.
 * Its size is adjusted to longest frame that this example code is supposed to handle. */
-#define RX_BUF_LEN 20
+#define RX_BUF_LEN RESP_FRAME_LEN // lunghezza massima
 static uint8 rx_buffer[RX_BUF_LEN];
 
 /* Hold copy of status register state here for reference so that it can be examined at a debug breakpoint. */
@@ -134,7 +187,7 @@ static void resp_msg_get_ts(uint8 *ts_field, uint32 *ts);
 *
 * @return none
 */
-int ss_init_run(uint8_t dev_id)
+int ss_init_run(uint64_t dev_id)
 { 
   /* Reset interrupts flags*/
   //tx_int_flag = 0;
@@ -144,10 +197,14 @@ int ss_init_run(uint8_t dev_id)
 
 
   // Imposto il valore dell'id del dispositivo con il quale voglio comunicare nel messaggio tx
-  tx_poll_msg[ALL_MSG_DEST_ID_INDEX] = dev_id;
+  //tx_poll_msg[ALL_MSG_DEST_ID_INDEX] = dev_id;
 
   /* Write frame data to DW1000 and prepare transmission. See NOTE 3 below. */
   tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
+
+  // Copio ID a 64 bit nel messaggio
+  uint64_to_bytes(dev_id, &tx_poll_msg[ALL_MSG_ID_START_IDX]);
+
   //dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS);
   dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0); /* Zero offset in TX buffer. */
   dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1); /* Zero offset in TX buffer, ranging. */
@@ -187,7 +244,10 @@ int ss_init_run(uint8_t dev_id)
   if (tx_int_flag)
   {
     tx_count++;
-    printf("Transmission to responder %d (#%d) \r\n",dev_id, tx_count);
+    uint32_t id_alta = (uint32_t)(dev_id >> 32);
+    uint32_t id_bassa = (uint32_t)(dev_id & 0xFFFFFFFFUL); // o solo (uint32_t)DEVICE_ID
+    // Stampa le due parti in esadecimale, 8 cifre ciascuna con padding
+    printf("Transmission to responder %08lX%08lX (#%d) \r\n", id_alta, id_bassa, tx_count);
 
     // Resetting tx interrupt flag
     tx_int_flag = 0;
@@ -220,66 +280,79 @@ int ss_init_run(uint8_t dev_id)
 
     /* Check that the frame is the expected response from the responder we contacted.
     * As the sequence number field of the frame is not relevant, it is cleared to simplify the validation of the frame. */
-    rx_buffer[ALL_MSG_SN_IDX] = 0;
-     if (memcmp(rx_buffer, rx_resp_msg, ALL_MSG_COMMON_LEN - 2) == 0 && 
-            rx_buffer[ALL_MSG_DEST_ID_IDX] == dev_id) 
-      {	
-      rx_count++;
-      printf("Reception from responder %d (#%d)\r\n",dev_id, rx_count);
-      uint32 poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
-      int32 rtd_init, rtd_resp;
-      float clockOffsetRatio ;
+    // Allora:
+    // 1. Controllo parte comune fino al function code
+    // 2. Controllo il function code
+    // 3. Estraggo ID dal buffer ricevuto
+    // 4. Confronto ID ricevuto con quello atteso (dev_id)
 
-      /* Retrieve poll transmission and response reception timestamps. See NOTE 5 below. */
-      poll_tx_ts = dwt_readtxtimestamplo32();
-      resp_rx_ts = dwt_readrxtimestamplo32();
+    if(frame_len >= (RESP_MSG_RESP_TX_TS_IDX + RESP_MSG_TS_LEN) && // lunghezza minima
+       memcmp(rx_buffer, rx_resp_msg, ALL_MSG_COMMON_LEN) == 0 && // compara parte fissa iniziale
+       rx_buffer[ALL_MSG_FC_IDX] == 0xE1) //function code = response
+    {
+      uint64_t received_id = bytes_to_uint64(&rx_buffer[ALL_MSG_ID_START_IDX]); // salvo id ricevuto
 
-      /* Read carrier integrator value and calculate clock offset ratio. See NOTE 7 below. */
-      clockOffsetRatio = dwt_readcarrierintegrator() * (FREQ_OFFSET_MULTIPLIER * HERTZ_TO_PPM_MULTIPLIER_CHAN_5 / 1.0e6) ;
+      if(received_id == dev_id) // Controllo che l'id sia quello del dispositivo a cui volevo inviare originariamente
+      {
+        rx_count++;
+        uint32_t id_alta = (uint32_t)(dev_id >> 32);
+        uint32_t id_bassa = (uint32_t)(dev_id & 0xFFFFFFFFUL); // o solo (uint32_t)DEVICE_ID
+        // Stampa le due parti in esadecimale, 8 cifre ciascuna con padding
+        printf("Reception from responder %08lX%08lX (#%d)\r\n", id_alta, id_bassa, rx_count);
+        uint32 poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
+        int32 rtd_init, rtd_resp;
+        float clockOffsetRatio ;
 
-      /* Get timestamps embedded in response message. */
-      resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &poll_rx_ts);
-      resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &resp_tx_ts);
+        /* Retrieve poll transmission and response reception timestamps. See NOTE 5 below. */
+        poll_tx_ts = dwt_readtxtimestamplo32();
+        resp_rx_ts = dwt_readrxtimestamplo32();
 
-      /* Compute time of flight and distance, using clock offset ratio to correct for differing local and remote clock rates */
-      rtd_init = resp_rx_ts - poll_tx_ts;
-      rtd_resp = resp_tx_ts - poll_rx_ts;
+        /* Read carrier integrator value and calculate clock offset ratio. See NOTE 7 below. */
+        clockOffsetRatio = dwt_readcarrierintegrator() * (FREQ_OFFSET_MULTIPLIER * HERTZ_TO_PPM_MULTIPLIER_CHAN_5 / 1.0e6) ;
 
-      tof = ((rtd_init - rtd_resp * (1.0f - clockOffsetRatio)) / 2.0f) * DWT_TIME_UNITS; // Specifying 1.0f and 2.0f are floats to clear warning 
-      distance = tof * SPEED_OF_LIGHT;
+        /* Get timestamps embedded in response message. */
+        resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &poll_rx_ts);
+        resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &resp_tx_ts);
+
+        /* Compute time of flight and distance, using clock offset ratio to correct for differing local and remote clock rates */
+        rtd_init = resp_rx_ts - poll_tx_ts;
+        rtd_resp = resp_tx_ts - poll_rx_ts;
+
+        tof = ((rtd_init - rtd_resp * (1.0f - clockOffsetRatio)) / 2.0f) * DWT_TIME_UNITS; // Specifying 1.0f and 2.0f are floats to clear warning 
+        distance = tof * SPEED_OF_LIGHT;
+
+        /* Resetting receive interrupt flag */
+        rx_int_flag = 0;
+
+        // Cerco indice dell'array di ancore a cui è memorizzato il device con dev_id
+        int target_index = -1;
+        for(int i=0; i<MAX_RESPONDERS; i++){
+          if(anchor_ids[i] == dev_id) {
+            target_index = i;
+            break;
+          }
+        }
+
+        if(target_index >= 0 && // ha trovato id corretto nella lista
+           target_index < MAX_RESPONDERS)
+        {
+          distances[target_index].id = dev_id;
+          distances[target_index].distance = distance;
+          distances[target_index].valid = true;
+        }
+      } 
+      else {
+        uint32_t id_alta = (uint32_t)(dev_id >> 32);
+        uint32_t id_bassa = (uint32_t)(dev_id & 0xFFFFFFFFUL); // o solo (uint32_t)DEVICE_ID
+        // Stampa le due parti in esadecimale, 8 cifre ciascuna con padding
+        printf("Received distance from wrong id, expected %08lX%08lX\r\n", id_alta, id_bassa);
+      }
 
       /* Resetting receive interrupt flag */
       rx_int_flag = 0;
-
-      distances[dev_id].id = dev_id;
-      distances[dev_id].distance = distance;
-      distances[dev_id].valid = true;
-
-      printf("Distance to responder %d: %f\r\n",dev_id, distance);
-
-
-      /* Controllo se tutti i risponditori abilitati sono validi, in caso  */
-      bool all_valid = true;
-      for (int i = 0; i < MAX_RESPONDERS; i++) {
-          if (anchor_enabled[i] && !distances[i].valid) {
-              all_valid = false;
-              break;
-          }
-      }
-      
-      /* If all anchors have valid measurements, print them together */
-      if (all_valid) {
-          printf("\n--- Distances to all anchors ---\n");
-          for (int i = 0; i < MAX_RESPONDERS; i++) {
-              if (anchor_enabled[i]) {
-                  printf("Anchor %d: %f m\n", 
-                         distances[i].id, 
-                         distances[i].distance);
-              }
-          }
-          printf("-------------------------------\n");
-      }
+    
     }
+    
   }
 
   if (to_int_flag || er_int_flag)
@@ -392,8 +465,18 @@ static void resp_msg_get_ts(uint8 *ts_field, uint32 *ts)
 
 
 /* Frames used in the ranging process for responder. */
-static uint8 rx_poll_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'D', 'E', 'V', 0, 0xE0, 0, 0};
-static uint8 tx_resp_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'V', 'E', 'D', 0, 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static uint8 rx_poll_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'D', 'E', 'V', 0, 0xE0};
+static uint8 tx_resp_msg[] = {0x41, 0x88, // Frame control
+                              0, // Sequence number
+                              0xCA, 0xDE, // PAN ID
+                              'V', 1, // Destination address
+                              'D', 'E', // Source address
+                              0xE1, // function code
+                              0, 0, 0, 0, 0, 0, 0, 0, // placeholder id (8 byte) 
+                              0, 0, 0, 0, // placeholder poll rx ts
+                              0, 0, 0, 0 // placeholder resp tx ts
+                              }; // grandezza = 26
+
 
 
 /* Frame sequence number for responder */
@@ -414,7 +497,7 @@ static uint64 resp_tx_ts;
  * @param dev_id The ID of this anchor
  * @return int Always returns 1
  */
-int ss_resp_run(uint8_t dev_id)
+int ss_resp_run(uint64_t dev_id)
 {   
     
     /* Reset interrupt flags for responder mode */
@@ -424,11 +507,11 @@ int ss_resp_run(uint8_t dev_id)
     to_int_flag = 0;
 
     /* Set our ID in the response message */
-    tx_resp_msg[ALL_MSG_DEST_ID_IDX] = dev_id;
+    //tx_resp_msg[ALL_MSG_DEST_ID_IDX] = dev_id;
     
     /* Activate reception immediately. */
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
-    printf("Responder %d: Attendo pacchetti, status: 0x%08x\r\n", dev_id, dwt_read32bitreg(SYS_STATUS_ID));
+    //printf("Responder %d: Attendo pacchetti, status: 0x%08x\r\n", dev_id, dwt_read32bitreg(SYS_STATUS_ID));
  
     
     // Attendo ricezione, errore o reset della task
@@ -438,7 +521,7 @@ int ss_resp_run(uint8_t dev_id)
     };
 
     if (new_spi_command_received) {
-        printf("Responder %d: Comando SPI ricevuto durante attesa UWB, ritorno al main loop.\r\n", dev_id);
+        //printf("Responder %llu: Comando SPI ricevuto durante attesa UWB, ritorno al main loop.\r\n", (unsigned long long)dev_id);
         dwt_forcetrxoff(); // Disabilita transceiver DW1000 per sicurezza prima di uscire
         return 1; // Ritorna al main loop che gestirà il comando SPI
     }
@@ -451,7 +534,7 @@ int ss_resp_run(uint8_t dev_id)
 
     if (rx_int_flag)
     {   
-        printf("Responder %d: Ricevuto qualcosa, check del msg...\r\n", dev_id);
+        //printf("Responder %d: Ricevuto qualcosa, check del msg...\r\n", dev_id);
         uint32 frame_len;
 
         /* Clear good RX frame event in the DW1000 status register. */
@@ -466,15 +549,25 @@ int ss_resp_run(uint8_t dev_id)
 
         /* Check that the frame is intended for us:
          * 1. Check first part of common header
-         * 2. Check that the destination ID matches our anchor ID */
-        rx_buffer[ALL_MSG_SN_IDX] = 0;
-        if (memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN - 2) == 0 && 
-            rx_buffer[ALL_MSG_DEST_ID_IDX] == dev_id)
+         * 2. Controlla function code
+         * 3. Estrai ID destinatario dal poll
+         * 4. Confronta con ID (dev_id)
+         */
+
+        if(frame_len >= (ALL_MSG_ID_START_IDX + ID_LEN) && // lunghezza minima
+           memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN) == 0 &&
+           rx_buffer[ALL_MSG_FC_IDX] == 0xE0) // Function code = poll
         {
+          uint64_t received_dest_id = bytes_to_uint64(&rx_buffer[ALL_MSG_ID_START_IDX]);
+
+          if(received_dest_id == dev_id)
+          {
             uint32 resp_tx_time;
             int ret;
-
-            printf("Poll received from initiator for anchor %d\r\n", dev_id);
+            uint32_t id_alta = (uint32_t)(dev_id >> 32);
+            uint32_t id_bassa = (uint32_t)(dev_id & 0xFFFFFFFFUL); // o solo (uint32_t)DEVICE_ID
+            // Stampa le due parti in esadecimale, 8 cifre ciascuna con padding
+            printf("Poll received from initiator for anchor %08lX%08lX\r\n", id_alta, id_bassa);
             
             /* Retrieve poll reception timestamp. */
             poll_rx_ts = get_rx_timestamp_u64();
@@ -491,6 +584,9 @@ int ss_resp_run(uint8_t dev_id)
 
             /* Write and send the response message. */
             tx_resp_msg[ALL_MSG_SN_IDX] = resp_frame_seq_nb;
+
+            // Scrivo id nel messaggio
+            uint64_to_bytes(dev_id, &tx_resp_msg[ALL_MSG_ID_START_IDX]);
 
             dwt_setdelayedtrxtime(resp_tx_time);
 
@@ -546,15 +642,19 @@ int ss_resp_run(uint8_t dev_id)
 
                 
             }
-        }
+          }
+          else 
+          {
+          }
+        } 
         else
         {
-            printf("Ignoring poll not addressed to us (our ID: %d, request ID: %d)\r\n", 
-                 dev_id, rx_buffer[ALL_MSG_DEST_ID_IDX]);
         }
-
+        
         /* Reset reception interrupt flag */
         rx_int_flag = 0;
+
+        
     }
     if (er_int_flag){
       printf("Error receiving data \r\n");

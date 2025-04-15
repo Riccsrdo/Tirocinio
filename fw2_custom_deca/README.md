@@ -30,8 +30,9 @@ Una volta fatto questo sarà possibile effettuare una build del progetto, e per 
 
 Una volta effettuati questi passaggi dovrebbe essere possibile utilizzare il dispositivo con il firmware custom.
 
-## Ultimo aggiornamento - 13_04 17:10
-La configurazione SPI per inizializzare il dispositivo come Slave è ultimata. Sono attivi alcuni comandi base come quelli che permettono di cambiare modalità di ranging, successivamente verranno aggiunti altri comandi di utilità che permettono di ottenere bene le distanze via SPI.
+## Ultimo aggiornamento - 15_04 14:45
+Ho iniziato l'implementazione degli id dei dispositivi in formato uint64. E' ancora da completare tutta la sezione di settaggio SPI per essere conforme al nuovo formato ID.
+Ho aggiornato i frame UWB per permettere lo scambio del nuovo ID, aumentandone la grandezza (comunque inferiore ai 127 byte massimi permessi per lo standard).
 
 
 
