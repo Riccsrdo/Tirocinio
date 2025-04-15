@@ -143,8 +143,8 @@ static uint8 tx_poll_msg[] = {0x41, 0x88, // Frame control
                               'D', 'E',  // Destination address
                               'V', 1, // Source address
                               0xE0, // Function code
-                              0, 0, 0, 0, 0, 0, 0, 0 // Placeholder 8 byte per ID
-                              }; // Grandezza = 18 ( POLL_FRAME_LEN -2)
+                              0, 0, 0, 0, 0, 0, 0, 0, // Placeholder 8 byte per ID
+                              0, 0}; // Grandezza = 20
       
 static uint8 rx_resp_msg[] = {0x41, 0x88, // Frame control
                               0, // sequence number
@@ -154,8 +154,8 @@ static uint8 rx_resp_msg[] = {0x41, 0x88, // Frame control
                               0xE1, // Function code
                               0, 0, 0, 0, 0, 0, 0, 0, // Placeholder per ID
                               0, 0, 0, 0, // POLL RX TS
-                              0, 0, 0, 0 // RESP TX TS
-                              }; // Grandezza = 26 (RESP_FRAME_LEN - 2)
+                              0, 0, 0, 0, // RESP TX TS
+                              0, 0}; // Grandezza = 28
 
 /* Frame sequence number, incremented after each transmission. */
 static uint8 frame_seq_nb = 0;
@@ -285,7 +285,8 @@ int ss_init_run(uint64_t dev_id)
     // 2. Controllo il function code
     // 3. Estraggo ID dal buffer ricevuto
     // 4. Confronto ID ricevuto con quello atteso (dev_id)
-
+    
+    rx_buffer[ALL_MSG_SN_IDX] = 0;
     if(frame_len >= (RESP_MSG_RESP_TX_TS_IDX + RESP_MSG_TS_LEN) && // lunghezza minima
        memcmp(rx_buffer, rx_resp_msg, ALL_MSG_COMMON_LEN) == 0 && // compara parte fissa iniziale
        rx_buffer[ALL_MSG_FC_IDX] == 0xE1) //function code = response
@@ -320,6 +321,8 @@ int ss_init_run(uint64_t dev_id)
 
         tof = ((rtd_init - rtd_resp * (1.0f - clockOffsetRatio)) / 2.0f) * DWT_TIME_UNITS; // Specifying 1.0f and 2.0f are floats to clear warning 
         distance = tof * SPEED_OF_LIGHT;
+
+        printf("Distance to responder: %f\r\n", distance);
 
         /* Resetting receive interrupt flag */
         rx_int_flag = 0;
@@ -465,7 +468,7 @@ static void resp_msg_get_ts(uint8 *ts_field, uint32 *ts)
 
 
 /* Frames used in the ranging process for responder. */
-static uint8 rx_poll_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'D', 'E', 'V', 0, 0xE0};
+static uint8 rx_poll_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'D', 'E', 'V', 1, 0xE0, 0, 0};
 static uint8 tx_resp_msg[] = {0x41, 0x88, // Frame control
                               0, // Sequence number
                               0xCA, 0xDE, // PAN ID
@@ -474,8 +477,8 @@ static uint8 tx_resp_msg[] = {0x41, 0x88, // Frame control
                               0xE1, // function code
                               0, 0, 0, 0, 0, 0, 0, 0, // placeholder id (8 byte) 
                               0, 0, 0, 0, // placeholder poll rx ts
-                              0, 0, 0, 0 // placeholder resp tx ts
-                              }; // grandezza = 26
+                              0, 0, 0, 0, // placeholder resp tx ts
+                              0, 0}; // grandezza = 28
 
 
 
@@ -500,6 +503,7 @@ static uint64 resp_tx_ts;
 int ss_resp_run(uint64_t dev_id)
 {   
     
+    //printf("Entro in modalità resp\r\n");
     /* Reset interrupt flags for responder mode */
     rx_int_flag = 0;
     tx_int_flag = 0;
@@ -534,7 +538,8 @@ int ss_resp_run(uint64_t dev_id)
 
     if (rx_int_flag)
     {   
-        //printf("Responder %d: Ricevuto qualcosa, check del msg...\r\n", dev_id);
+        
+        printf("Responder: Ricevuto qualcosa, check del msg...\r\n");
         uint32 frame_len;
 
         /* Clear good RX frame event in the DW1000 status register. */
@@ -553,15 +558,29 @@ int ss_resp_run(uint64_t dev_id)
          * 3. Estrai ID destinatario dal poll
          * 4. Confronta con ID (dev_id)
          */
-
+         
+        /*
+        for(int i=0; i<ALL_MSG_ID_START_IDX + ID_LEN + 2; i++){
+          printf("INDICE: %d \t", i);
+          if(i<ALL_MSG_ID_START_IDX-1) printf("NORMALE: el: %d \t", rx_poll_msg[i]);
+          printf("RICEVUTO: el: %d\r\n", rx_buffer[i]);
+        }
+        */
+        
+        
+        rx_buffer[ALL_MSG_SN_IDX] = 0;
         if(frame_len >= (ALL_MSG_ID_START_IDX + ID_LEN) && // lunghezza minima
            memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN) == 0 &&
            rx_buffer[ALL_MSG_FC_IDX] == 0xE0) // Function code = poll
-        {
+        { 
+          //printf("Entro qui\r\n");
           uint64_t received_dest_id = bytes_to_uint64(&rx_buffer[ALL_MSG_ID_START_IDX]);
+          uint32_t id_alta = (uint32_t)(received_dest_id >> 32);
+          uint32_t id_bassa = (uint32_t)(received_dest_id & 0xFFFFFFFFUL);
+          //printf("Received destination id: %08lX%08lX\r\n", id_alta, id_bassa);
 
           if(received_dest_id == dev_id)
-          {
+          { 
             uint32 resp_tx_time;
             int ret;
             uint32_t id_alta = (uint32_t)(dev_id >> 32);
@@ -604,7 +623,7 @@ int ss_resp_run(uint64_t dev_id)
                 while(!tx_int_flag && !bool_mode_changed) {};
 
                 if(tx_int_flag){
-                  printf("Response sent from anchor %d\r\n", dev_id);
+                  printf("Response sent from anchor\r\n", dev_id);
                   resp_frame_seq_nb++;
                 }
                 else {
@@ -645,6 +664,7 @@ int ss_resp_run(uint64_t dev_id)
           }
           else 
           {
+            printf("messaggio ricevuto non diretto a noi \r\n");
           }
         } 
         else

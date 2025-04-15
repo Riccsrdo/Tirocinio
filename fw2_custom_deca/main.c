@@ -788,6 +788,9 @@ static void spi_slave_init(void)
     /* Tasks must be implemented to never return... */
 
     // Controllo la ricezione di comandi SPI
+
+
+    nrf_delay_ms(200);
         //printf("Inizio raccolta dati SPI\r\n");
         if (new_spi_command_received) {
             printf("SPI CMD Received: 0x%02X (len %d)\r\n", spi_cmd_buffer[0], spi_cmd_length);
