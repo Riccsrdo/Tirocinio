@@ -247,7 +247,7 @@ int ss_init_run(uint64_t dev_id)
     uint32_t id_alta = (uint32_t)(dev_id >> 32);
     uint32_t id_bassa = (uint32_t)(dev_id & 0xFFFFFFFFUL); // o solo (uint32_t)DEVICE_ID
     // Stampa le due parti in esadecimale, 8 cifre ciascuna con padding
-    printf("Transmission to responder %08lX%08lX (#%d) \r\n", id_alta, id_bassa, tx_count);
+    //printf("Transmission to responder %08lX%08lX (#%d) \r\n", id_alta, id_bassa, tx_count);
 
     // Resetting tx interrupt flag
     tx_int_flag = 0;
@@ -299,7 +299,7 @@ int ss_init_run(uint64_t dev_id)
         uint32_t id_alta = (uint32_t)(dev_id >> 32);
         uint32_t id_bassa = (uint32_t)(dev_id & 0xFFFFFFFFUL); // o solo (uint32_t)DEVICE_ID
         // Stampa le due parti in esadecimale, 8 cifre ciascuna con padding
-        printf("Reception from responder %08lX%08lX (#%d)\r\n", id_alta, id_bassa, rx_count);
+        //printf("Reception from responder %08lX%08lX (#%d)\r\n", id_alta, id_bassa, rx_count);
         uint32 poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
         int32 rtd_init, rtd_resp;
         float clockOffsetRatio ;
@@ -322,7 +322,8 @@ int ss_init_run(uint64_t dev_id)
         tof = ((rtd_init - rtd_resp * (1.0f - clockOffsetRatio)) / 2.0f) * DWT_TIME_UNITS; // Specifying 1.0f and 2.0f are floats to clear warning 
         distance = tof * SPEED_OF_LIGHT;
 
-        printf("Distance to responder: %f\r\n", distance);
+        //printf("Distance to responder: %f\r\n", distance);
+        printf("%d: %f\r\n", rx_count, distance);
 
         /* Resetting receive interrupt flag */
         rx_int_flag = 0;
@@ -402,7 +403,7 @@ void rx_to_cb(const dwt_cb_data_t *cb_data)
 {
   to_int_flag = 1 ;
   /* TESTING BREAKPOINT LOCATION #2 */
-  printf("TimeOut\r\n");
+  //printf("TimeOut\r\n");
 }
 
 /*! ------------------------------------------------------------------------------------------------------------------

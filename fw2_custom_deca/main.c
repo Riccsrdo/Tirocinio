@@ -58,6 +58,8 @@
 
   static void prepare_distance_data_for_spi(void);
   static void prepare_info_data_for_spi(void);
+  static void prepare_config_info_for_spi(void);
+  static void prepare_avg_measurement_for_spi(void);
  
  //-----------------dw1000----------------------------
  
@@ -103,7 +105,7 @@
  #define MAX_RESPONDERS 16 // da aggiornare anche su ss_init_main.c in caso di cambiamento
  #endif
  
- volatile device_mode_t device_mode = DEVICE_MODE_INITIATOR; /* Imposto modalitÃ  iniziale come iniziatore */
+ volatile device_mode_t device_mode = DEVICE_MODE_RESPONDER; /* Imposto modalitÃ  iniziale come iniziatore */
  volatile bool bool_mode_changed = false;                         /* Flag booleana per inidicare che la modalitÃ  Ã¨ cambiata */
  
  /* Impostazioni modalitÃ  multi-risponditore
@@ -111,8 +113,8 @@
 
  volatile uint64_t anchor_ids[MAX_RESPONDERS] = {0, 1, 2, 3, 4, 5, 6, 7, 8,
                                                            9, 10, 11, 12, 13, 14, 15}; /* ID dei risponditori */
- volatile uint64_t DEVICE_ID = 0; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
- volatile bool anchor_enabled[MAX_RESPONDERS] = {true, true, true, false, false, false, false, false,
+ volatile uint64_t DEVICE_ID = 1; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
+ volatile bool anchor_enabled[MAX_RESPONDERS] = {true, true, false, false, false, false, false, false,
                                                         false, false, false, false, false, false, false, false}; /* Abilitazione dei risponditori */
  
 #if 1
@@ -149,7 +151,7 @@
  // altri dispositivi
  #define SPI_CMD_SET_MODE_RESP 0x11 // Permette di mettersi in ascolto e attendere richieste di comunicazione
  // dagli iniziatori
- #define SPI_CMD_SET_ID        0x20 // Permette di settare id per il dispositivo, deve essere seguito da un byte
+ #define SPI_CMD_SET_ID        0x20 // Permette di settare id per il dispositivo, deve essere seguito da 8 byte
  // che indica l'ID che si vuole settare
  #define SPI_CMD_ENABLE_ANCHOR 0x30 // Permette di abilitare l'ancora nell'array delle ancore disabilitate/abilitate, deve
  // essere seguito da un byte come ID
@@ -157,7 +159,35 @@
  #define SPI_CMD_GET_INFO      0xFE // Informazioni sul sistema
  #define SPI_CMD_GET_HELP      0xFF // Dummy byte, usando per ottenere aiuto
 
+ #define SPI_CMD_ENTER_CONFIG_MODE 0x40 // Comando per entrare in modalità configurazione e settare parametri come ID comunicazioni
+ #define SPI_CMD_EXIT_CONFIG_MODE 0x41 // Esci dalla modalità di configurazione e salva le modifiche
+ #define SPI_CMD_SET_NUM_DEVICES 0x42 // Imposta il numero di dispositivi con cui si vuole comunicare
+ #define SPI_CMD_SET_DEVICE_ID_AT 0x43 // Imposta l'id del dispositivo all'index desiderato nella lista di ID
+ #define SPI_CMD_MEASURE_DISTANCE 0x50 // Esegue misurazioni multiple e restituisce media, dato id
+
+ // Misurazioni media
+ typedef struct {
+  uint64_t target_id;
+  bool valid;
+  double average_distance;
+  uint8_t samples_count; // campioni validi ottenuti
+  uint8_t requested_samples; // campioni richiesti
+ } average_measurement_t;
+
+ // buffer globale misurazione media corrente
+ static average_measurement_t current_avg_measurement = {0};
+ //flag booleana che indica misurazioni in corso
+ static volatile bool performing_avg_measurement = false;
+
  extern responder_distance_t distances[MAX_RESPONDERS];
+
+
+ // Flag di configurazione e buffer
+ static volatile bool in_config_mode = false;
+ static volatile uint8_t config_num_devices = 0;
+ static volatile uint64_t config_anchor_ids[MAX_RESPONDERS];
+ static volatile bool config_anchor_enabled[MAX_RESPONDERS];
+ static volatile bool continous_measurements = false;
 
 
  /*------------------------------fine-------------------------------*/
@@ -430,6 +460,79 @@ void vInterruptInit (void)
   nrf_drv_gpiote_in_event_enable(DW1000_IRQ, true);
 }
 
+/*-------------------------------------misurazioni average----------------------*/
+
+ static average_measurement_t perform_average_measurement(uint64_t target_id, uint8_t num_samples) {
+    average_measurement_t result = {
+      .target_id = target_id,
+      .valid = false,
+      .average_distance = 0.0,
+      .samples_count = 0,
+      .requested_samples = num_samples
+    };
+
+    // Effettuo misurazioni solo se in modalità Iniziatore
+    if (device_mode != DEVICE_MODE_INITIATOR){
+      printf("Dispositivo non in modalità iniziatore, misurazioni non possibili\r\n");
+      return result;
+    }
+
+    // trovo index target nell'array
+    int target_index = -1;
+    for (int i = 0; i<MAX_RESPONDERS; i++){
+      if(anchor_ids[i]==target_id){
+        target_index = -1;
+        break;
+      }
+    }
+    
+    uint32_t id_high = (uint32_t)(target_id>>32);
+    uint32_t id_low = (uint32_t)(target_id & 0xFFFFFFFFUL);
+    printf("Inizio misurazioni verso target con id: %08lX%08lX\r\n", id_high, id_low);
+  
+    // Resetto misurazioni per quel target fatte in precedenza
+    distances[target_index].valid=false;
+    distances[target_index].distance=0.0;
+
+    double sum_distances = 0.0;
+    uint8_t valid_samples = 0;
+
+    // Eseguo 10 misurazioni
+    for(uint8_t i = 0; i< num_samples; i++){
+      
+      ss_init_run(target_id);
+
+      // controllo se la misurazione è valida
+      if(distances[target_index].valid){
+        sum_distances += distances[target_index].distance;
+        valid_samples++;
+      }
+
+      nrf_delay_ms(50); // breve ritardo
+      
+      // In caso di comando SPI ricevuto, si interrompe
+      if(new_spi_command_received){
+        break;
+      }
+    }
+
+    if(valid_samples>0){
+      result.valid=true;
+      result.average_distance = sum_distances / valid_samples;
+      result.samples_count = valid_samples;
+
+      printf("Distanza media calcolata dal dispositivo %08lX%08lX è: %f\r\n", id_high, id_low, result.average_distance);
+    }
+
+
+    return result;
+    
+ }
+
+
+
+/*-------------------------------------fine------------------------------------*/
+
 
 #if 1
 /*---------------------------------------Funzioni SPI--------------------------------*/
@@ -459,6 +562,17 @@ static void prepare_spi_response(uint8_t command_processed){
              // Prepare a simple help message or code
              snprintf((char*)m_spi_tx_buf, SPI_TX_DATA_BUFFER_SIZE, "CMDS: 01=Dist, 10=Init, 11=Resp, 20=SetID, 30/31=En/Dis, FE=Info");
              break;
+        
+        case SPI_CMD_ENTER_CONFIG_MODE:
+        case SPI_CMD_EXIT_CONFIG_MODE:
+        case SPI_CMD_SET_NUM_DEVICES:
+        case SPI_CMD_SET_DEVICE_ID_AT:
+          prepare_config_info_for_spi();
+          break;
+        
+        case SPI_CMD_MEASURE_DISTANCE:
+          prepare_avg_measurement_for_spi();
+          break;
 
         default:
              // Unknown command or error during processing
@@ -467,6 +581,40 @@ static void prepare_spi_response(uint8_t command_processed){
              memset(&m_spi_tx_buf[2], 0, SPI_TX_DATA_BUFFER_SIZE - 2);
              break;
     }
+}
+
+// Funzione per preparare dati in risposta SPI
+static void prepare_avg_measurement_for_spi(void){
+  uint8_t tx_len = 0;
+
+  // Byte 0: flag di validità
+  m_spi_tx_buf[tx_len++] = current_avg_measurement.valid ? 1: 0;
+
+  // Byte 1: Numero di campioni richiesti
+  m_spi_tx_buf[tx_len++] = current_avg_measurement.requested_samples;
+
+  // byte 2: numero di campioni utilizzati
+  m_spi_tx_buf[tx_len++] = current_avg_measurement.samples_count;
+
+  // byte 3-10: id del target
+  for (int i = 0; i<8; i++){
+    m_spi_tx_buf[tx_len++] = (uint8_t)((current_avg_measurement.target_id >> (i*8)) & 0xFF);
+  }
+
+  // byte 11-18: Distanza media (se valida)
+  if(current_avg_measurement.valid){
+    memcpy(&m_spi_tx_buf[tx_len], &current_avg_measurement.average_distance, sizeof(double));
+  } else {
+    memset(&m_spi_tx_buf[tx_len], 0, sizeof(double));
+  }
+
+  tx_len += sizeof(double);
+  
+  // Pongo tutti zeri nel resto del vettore non usato
+  if (tx_len < SPI_TX_DATA_BUFFER_SIZE) {
+     memset(&m_spi_tx_buf[tx_len], 0, SPI_TX_DATA_BUFFER_SIZE - tx_len);
+  }
+
 }
 
 /*
@@ -512,7 +660,12 @@ static void prepare_info_data_for_spi(void)
 {
     uint8_t tx_len = 0;
     m_spi_tx_buf[tx_len++] = (uint8_t)device_mode; //salvo la modalità del dispositivo...
-    m_spi_tx_buf[tx_len++] = DEVICE_ID; //...seguita dall'id del dispositivo
+    
+    // Device id
+    for (int i = 0; i < 8; i++) {
+      m_spi_tx_buf[tx_len++] = (uint8_t)((DEVICE_ID >> (i*8)));
+    }
+
 
     uint16_t enabled_mask = 0;
     for(int i=0; i<MAX_RESPONDERS; ++i) {
@@ -528,6 +681,61 @@ static void prepare_info_data_for_spi(void)
         memset(&m_spi_tx_buf[tx_len], 0, SPI_TX_DATA_BUFFER_SIZE - tx_len);
     }
 }
+
+// Funzione per preparare info di configurazione per il buffer di trasmissione SPI
+static void prepare_config_info_for_spi(void){
+  uint8_t tx_len = 0;
+
+  // Byte 0: Status di configurazione
+  m_spi_tx_buf[tx_len++] = in_config_mode ? 1 : 0; // 1 indica che sta in configurazione
+  
+  // Byte 1: numero di dispositivi configurati
+  m_spi_tx_buf[tx_len++] = config_num_devices;
+
+  // Byte 2-3: Maschera dispositivi abilitati
+  // NON IMPLEMENTATA
+
+  // Pulisco buffer rimanente
+  if (tx_len < SPI_TX_DATA_BUFFER_SIZE) {
+    memset(&m_spi_tx_buf[tx_len], 0, SPI_TX_DATA_BUFFER_SIZE - tx_len);
+  }
+
+}
+
+// Funzione che permette di inizializzare array di id con le impostazioni attuali
+static void init_config_arrays(void){
+  
+  // Per prima cosa effettuo una copia degli array che ho già salvato
+  for (int i=0; i<MAX_RESPONDERS; i++){
+    config_anchor_ids[i]=anchor_ids[i];
+    config_anchor_enabled[i]=anchor_enabled[i];
+  }
+
+  // Poi conto il numero di dispositivi attualmente abilitati
+  config_num_devices = 0;
+  for (int i=0; i < MAX_RESPONDERS; i++){
+    if(anchor_enabled[i]){
+      config_num_devices++;
+    }
+  }
+}
+
+// Funzione che, dopo le modifiche effettuate in modalità configurazione
+// le applica agli array effettivi
+static void apply_config_changes(void){
+  
+  // Applico solo se in modalità configurazione
+  if (in_config_mode){
+    
+    for(int i=0; i<MAX_RESPONDERS; i++){
+      anchor_ids[i] = config_anchor_ids[i];
+      anchor_enabled[i] = config_anchor_enabled[i];
+    }
+
+    printf("Nuova configurazione applicata!\r\n");
+  }
+}
+
 
 /*
 Funzione che processa i comandi SPI ricevuti dal master.
@@ -561,12 +769,19 @@ static void process_spi_command(uint8_t *cmd_data, uint8_t cmd_len)
             break;
 
         case SPI_CMD_SET_ID:
-            if (cmd_len > 1) {
-                int id = cmd_data[1];
-                if (id >= 0 && id < MAX_RESPONDERS) {
-                    DEVICE_ID = (uint8_t)id;
+            if (cmd_len >= 9) { // comando + 8 byte dispositivo
+                uint64_t device_id = 0;
+                // Costruisco a partire dagli 8 byte ricevuti
+                for (int i = 0; i < 8; i++){
+                  device_id |= ((uint64_t)cmd_data[1+i] << (i * 8));
+                }
+                DEVICE_ID = device_id;
+
+                uint32_t id_high = (uint32_t)(device_id>>32);
+                uint32_t id_low = (uint32_t)(device_id & 0xFFFFFFFFUL);
+                printf("ID del dispositivo settato a %08lX%08lX\r\n", id_high, id_low);
+
                 } else { /* Handle invalid ID */ }
-            }
             break;
 
          case SPI_CMD_ENABLE_ANCHOR:
@@ -586,6 +801,84 @@ static void process_spi_command(uint8_t *cmd_data, uint8_t cmd_len)
                 } else { /* Handle invalid ID */ }
              }
              break;
+        
+        case SPI_CMD_ENTER_CONFIG_MODE:
+          if(!in_config_mode){
+            in_config_mode = true;
+            init_config_arrays();
+            printf("Entrato in modalità configurazione \r\n");
+          }
+        
+        case SPI_CMD_EXIT_CONFIG_MODE:
+          if (in_config_mode) {
+            apply_config_changes();
+            in_config_mode = false;
+            printf("Uscito dalla modalità configurazione\r\n");
+          }
+        
+        case SPI_CMD_SET_NUM_DEVICES:
+          if (in_config_mode && cmd_len > 1) {
+            uint8_t num = cmd_data[1];
+            if (num < MAX_RESPONDERS) {
+              config_num_devices = num;
+              printf("Numero di dispositivi settato a: %d\r\n", config_num_devices);
+            }
+          } else if (!in_config_mode) {
+            printf("Comando ignorato, dispositivo non in config mode\r\n");
+          }
+          break;
+
+        case SPI_CMD_SET_DEVICE_ID_AT:
+          if (in_config_mode && cmd_len >= 10) // comando + 1 byte index array + 8 byte id
+          {
+            uint8_t idx = cmd_data[1];
+            if(idx < MAX_RESPONDERS){
+              uint64_t device_id = 0;
+
+              // Costruisco id a 64 bit a partire da 8 byte
+              for(int i = 0; i<8; i++){
+                device_id |= ((uint64_t)cmd_data[2+i] << (i * 8));
+              }
+
+              config_anchor_ids[idx] = device_id;
+              config_anchor_enabled[idx] = true;
+
+              uint32_t id_high = (uint32_t)(device_id>>32);
+              uint32_t id_low = (uint32_t)(device_id & 0xFFFFFFFFUL);
+              printf("ID all'indice %d settato a %08lX%08lX\r\n", idx, id_high, id_low);
+            }
+          } else if (!in_config_mode){
+            printf("Dispositivo non in config mode\r\n");
+          }
+          else {
+            printf("Formato del comando non valido\r\n");
+          }
+          break;
+        
+        case SPI_CMD_MEASURE_DISTANCE:
+          if(cmd_len>=10) { // Comando + 8 byte id + numero misurazioni
+            
+            // Estraggo id target
+            uint64_t target_id = 0;
+            for(int i=0; i<8; i++){
+              target_id |= ((uint64_t)cmd_data[1+i] << (i*8));
+            }
+
+            uint8_t num_samples = cmd_data[9];
+            if(num_samples>50) num_samples=50; // massimo 50
+             
+            uint32_t id_high = (uint32_t)(target_id>>32);
+            uint32_t id_low = (uint32_t)(target_id & 0xFFFFFFFFUL);
+            printf("inizio misurazioni verso dispositivo %08lX%08lX\r\n", id_high, id_low);
+
+            performing_avg_measurement = true;
+            
+            // effettuo misurazioni
+            current_avg_measurement = perform_average_measurement(target_id, num_samples);
+
+            performing_avg_measurement = false;
+          }
+          break;
 
         case SPI_CMD_GET_INFO:
              // Action is to prepare response
@@ -658,6 +951,8 @@ static void spi_slave_init(void)
 }
 
 /*----------------------------------------fine----------------------------------------*/
+
+
  
  #endif
  
@@ -821,62 +1116,64 @@ static void spi_slave_init(void)
                  //NRF_LOG_FLUSH();
             }
         }
-
-        // --- 2. Handle UWB Mode Switching ---
-        //printf("Gestisco cambio di modalità\r\n");
-        if (bool_mode_changed) {
-             printf("Mode change detected.\r\n");
-             // Reset device state for new mode
-             if (device_mode == DEVICE_MODE_INITIATOR) {
-                 dwt_setrxtimeout(65000);
-                 dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
-                 printf("Switched to INITIATOR mode\r\n");
-             } else {
-                 dwt_setrxtimeout(0);
-                 printf("Switched to RESPONDER mode (ID: %d)\r\n", DEVICE_ID);
-             }
-             dwt_rxreset(); // Reset reception
-
-             // Reset distance tracking
-             // No mutex needed here if only main loop modifies distances
-             for (int i = 0; i < MAX_RESPONDERS; i++) {
-                 distances[i].distance = 0.0;
-                 distances[i].valid = false;
-             }
-
-             bool_mode_changed = false; // Reset the flag
-             //NRF_LOG_FLUSH();
-        }
-
-        // --- 3. Perform UWB Ranging ---
-        //printf("Gestisco misurazioni\r\n");
-        if (device_mode == DEVICE_MODE_INITIATOR) {
-            // Cycle through enabled anchors
-            printf("Inizio misurazioni\r\n");
-            for (int i = 0; i < MAX_RESPONDERS; i++) {
-                if (anchor_enabled[i] && i != DEVICE_ID) {
-                    LEDS_INVERT(BSP_LED_1_MASK); // Activity indicator
-                    // NRF_LOG_DEBUG("Ranging with %d", i); NRF_LOG_FLUSH();
-                    ss_init_run(i); // This function polls DW1000 flags internally
-                    LEDS_INVERT(BSP_LED_1_MASK);
-
-                    // Check for SPI commands *between* ranging attempts
-                     if (new_spi_command_received) break; // Process SPI cmd sooner
-
-                    nrf_delay_ms(RNG_DELAY_MS); // Delay between anchors
-                }
-                 // Allow processing SPI commands if loop takes time
-                 if (new_spi_command_received) break;
+        if(!in_config_mode && continous_measurements){
+          // --- 2. Handle UWB Mode Switching ---
+          //printf("Gestisco cambio di modalità\r\n");
+          if (bool_mode_changed) {
+            printf("Mode change detected.\r\n");
+            // Reset device state for new mode
+            if (device_mode == DEVICE_MODE_INITIATOR) {
+                dwt_setrxtimeout(65000);
+                dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
+                printf("Switched to INITIATOR mode\r\n");
+            } else {
+                dwt_setrxtimeout(0);
+                printf("Switched to RESPONDER mode (ID: %d)\r\n", DEVICE_ID);
             }
-        } else { // Responder mode
-            LEDS_INVERT(BSP_LED_1_MASK); // Activity indicator
-            // NRF_LOG_DEBUG("Running as responder %d", DEVICE_ID); NRF_LOG_FLUSH();
-            ss_resp_run(DEVICE_ID); // This function polls DW1000 flags internally
-            LEDS_INVERT(BSP_LED_1_MASK);
-             // Responder mode is mostly waiting, check SPI often is implicit.
-             // Add a small delay if ss_resp_run returns immediately without receiving
-             nrf_delay_ms(10); // Small delay to prevent busy-waiting if no poll received
+            dwt_rxreset(); // Reset reception
+
+            // Reset distance tracking
+            // No mutex needed here if only main loop modifies distances
+            for (int i = 0; i < MAX_RESPONDERS; i++) {
+                distances[i].distance = 0.0;
+                distances[i].valid = false;
+            }
+
+            bool_mode_changed = false; // Reset the flag
+            //NRF_LOG_FLUSH();
+          }
+
+          // --- 3. Perform UWB Ranging ---
+          //printf("Gestisco misurazioni\r\n");
+          if (device_mode == DEVICE_MODE_INITIATOR) {
+              // Cycle through enabled anchors
+              //printf("Inizio misurazioni\r\n");
+              for (int i = 0; i < MAX_RESPONDERS; i++) {
+                  if (anchor_enabled[i] && i != DEVICE_ID) {
+                      LEDS_INVERT(BSP_LED_1_MASK); // Activity indicator
+                      // NRF_LOG_DEBUG("Ranging with %d", i); NRF_LOG_FLUSH();
+                      ss_init_run(i); // This function polls DW1000 flags internally
+                      LEDS_INVERT(BSP_LED_1_MASK);
+
+                      // Check for SPI commands *between* ranging attempts
+                        if (new_spi_command_received) break; // Process SPI cmd sooner
+
+                      nrf_delay_ms(RNG_DELAY_MS); // Delay between anchors
+                  }
+                    // Allow processing SPI commands if loop takes time
+                    if (new_spi_command_received) break;
+              }
+          } else { // Responder mode
+              LEDS_INVERT(BSP_LED_1_MASK); // Activity indicator
+              // NRF_LOG_DEBUG("Running as responder %d", DEVICE_ID); NRF_LOG_FLUSH();
+              ss_resp_run(DEVICE_ID); // This function polls DW1000 flags internally
+              LEDS_INVERT(BSP_LED_1_MASK);
+                // Responder mode is mostly waiting, check SPI often is implicit.
+                // Add a small delay if ss_resp_run returns immediately without receiving
+                nrf_delay_ms(10); // Small delay to prevent busy-waiting if no poll received
+          }
         }
+        
   
     #else
     // Run appropriate function based on current mode

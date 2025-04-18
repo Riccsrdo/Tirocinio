@@ -30,9 +30,10 @@ Una volta fatto questo sarà possibile effettuare una build del progetto, e per 
 
 Una volta effettuati questi passaggi dovrebbe essere possibile utilizzare il dispositivo con il firmware custom.
 
-## Ultimo aggiornamento - 15_04 14:45
-Ho iniziato l'implementazione degli id dei dispositivi in formato uint64. E' ancora da completare tutta la sezione di settaggio SPI per essere conforme al nuovo formato ID.
-Ho aggiornato i frame UWB per permettere lo scambio del nuovo ID, aumentandone la grandezza (comunque inferiore ai 127 byte massimi permessi per lo standard).
+## Ultimo aggiornamento - 18_04 11:40
+Aggiunti alcuni comandi di SPI che permettono di settare alcune configurazioni del dispositivo quali gli ID dei dispositivi con cui vogliamo comunicare, oltre al comando che permette di settare l'id del dispositivo come uint64 invece che come uint8.
+Inoltre, implementata funzione che dato un certo id, e un numero di misurazioni a scelta, effettua quel numero di misurazioni e ne calcola la media.
+Ancora da testare.
 
 
 
