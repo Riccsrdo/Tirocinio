@@ -199,3 +199,132 @@ int dwm_request_distances(ResponderInfo* responder_array, int max_responders, ui
 
     return 0; // Successo
 }
+
+int dwm_set_id(uint64_t new_id){
+    uint8_t tx_buff[9]; // comando + 8 byte id
+    uint8_t rx_buff[9]; // buffer di ricezione ignorato
+
+    tx_buff[0] = CMD_SET_ID;
+    // popolo il resto del buffer con il nuovo id
+    // scomposto in 8 byte
+    for(int i=0; i<8; i++){
+        tx_buff[i+1] = (uint8_t)((new_id >> (i*8)) & 0xFF);
+    }
+
+    // Invio comando e id
+    int ret = dwm_spi_transfer(tx_buff, rx_buff, sizeof(tx_buff));
+    if(ret!=0){
+        fprintf(stderr, "Errore durante invio comando SET_ID\n");
+        return -1;
+    }
+
+    printf("Ide del dispositivo impostato a 0x%llx\n", (unsigned long long)new_id);
+    return 0;
+}
+
+int dwm_enable_anchor(uint64_t anchor_id){
+    uint8_t tx_buff[9]; // comando + 8 byte id
+    uint8_t rx_buff[9]; // ignorato
+
+    tx_buff[0] = CMD_ENABLE_ANCHOR;
+    //popolo array con id scomposto in 8 byte
+    for(int i=0; i<8; i++){
+        tx_buff[i+1] = (uint8_t)((new_id >> (i*8)) & 0xFF);
+    }
+
+    // invio e ricevo risposta
+    int ret = dwm_spi_transfer(tx_buff, rx_buff, sizeof(tx_buff));
+    if(ret!=0){
+        fprintf(stderr, "Errore nell'invio comando ENABLE_ANCHOR\n");
+        return -1;
+    }
+
+    printf("Abilitata ancora con id 0x%llx\n", (unsigned long long)anchor_id);
+}
+
+int dwm_disable_anchor(uint64_t anchor_id){
+    uint8_t tx_buff[9]; // comando + 8 byte id
+    uint8_t rx_buff[9]; // ignorato
+
+    tx_buff[0] = CMD_DISABLE_ANCHOR;
+    //popolo array con id scomposto in 8 byte
+    for(int i=0; i<8; i++){
+        tx_buff[i+1] = (uint8_t)((new_id >> (i*8)) & 0xFF);
+    }
+
+    // invio e ricevo risposta
+    int ret = dwm_spi_transfer(tx_buff, rx_buff, sizeof(tx_buff));
+    if(ret!=0){
+        fprintf(stderr, "Errore nell'invio comando DISABLE_ANCHOR\n");
+        return -1;
+    }
+
+    printf("Disabilitata ancora con id 0x%llx\n", (unsigned long long)anchor_id);
+}
+
+int dwm_enter_config_mode(void){
+    int ret = dwm_send_command(CMD_ENTER_CONFIG_MODE);
+    if(ret!=0){
+        fprintf(stderr, "Errore nell'invio comando ENTER_CONFIG_MODE\n");
+        return -1;
+    }
+
+    printf("Dispositivo ora in modalità config!\n");
+    return 0;
+}
+
+
+int dwm_exit_config_mode(void){
+    int ret = dwm_send_command(CMD_EXIT_CONFIG_MODE);
+    if(ret!=0){
+        fprintf(stderr, "Errore nell'invio comando EXIT_CONFIG_MODE\n");
+        return -1;
+    }
+
+    printf("Dispositivo uscito dalla modalità configurazione!\n");
+    return 0;
+}
+
+int dwm_set_num_devices(uint8_t num_devices){
+    int ret = dwm_send_command_with_arg(CMD_SET_NUM_DEVICES, num_devices);
+    if(ret!=0){
+        fprintf(stderr, "Errore nell'invio comando SET_NUM_DEVICES\n");
+        return -1;
+    }
+
+    printf("Numero di dispositivi impostato a: %d!\n", num_devices);
+    return 0;
+}
+
+int dwm_set_device_id_at(uint8_t index, uint64_t device_id){
+    // Prima controllo che l'indce non superi il numero massimo di dispositiv
+    // consentiti
+    if(index >= MAX_DWM_RESPONDERS){
+        fprintf(stderr, "Errore: Indice non valido. Deve essere tra 0 e %d.\n", MAX_DWM_RESPONDERS - 1);
+        return -1;
+    }
+
+    uint8_t tx_buf[10]; // comando + index + 8 byte id
+    uint8_t rx_buf[10]; // ignorato
+
+    tx_buf[0] = CMD_SET_DEVICE_ID_AT;
+    tx_buf[1] = index;
+
+    //popolo array con id scomposto in 8 byte
+    for(int i=0; i<8; i++){
+        tx_buff[i+2] = (uint8_t)((device_id >> (i*8)) & 0xFF);
+    }
+
+    int ret = dwm_spi_transfer(tx_buf, rx_buf, sizeof(tx_buf));
+    if (ret != 0) {
+        fprintf(stderr, "Errore durante l'impostazione dell'ID del dispositivo all'indice %d.\n", index);
+        return -1;
+    }
+    
+    printf("ID dispositivo all'indice %d impostato a: 0x%llx\n", index, (unsigned long long)device_id);
+    return 0;
+}
+
+int dwm_measure_average(uint64_t target_id, uint8_t num_samples, AverageMeasurement* result){
+    
+}

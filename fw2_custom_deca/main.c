@@ -60,6 +60,7 @@
   static void prepare_info_data_for_spi(void);
   static void prepare_config_info_for_spi(void);
   static void prepare_avg_measurement_for_spi(void);
+  static void prepare_all_measurements_for_spi(void);
  
  //-----------------dw1000----------------------------
  
@@ -133,7 +134,7 @@
 
  // Dimensione buffer per ricezione/invio dati dal/al master
  #define SPI_CMD_BUFFER_SIZE 32 // Max command length from master
- #define SPI_TX_DATA_BUFFER_SIZE 255 // Max data length to master
+ #define SPI_TX_DATA_BUFFER_SIZE 512 // Max data length to master
  
  // Buffer di salvataggio dati da inviare via SPI
  static uint8_t m_spi_rx_buf[SPI_CMD_BUFFER_SIZE]; 
@@ -164,6 +165,7 @@
  #define SPI_CMD_SET_NUM_DEVICES 0x42 // Imposta il numero di dispositivi con cui si vuole comunicare
  #define SPI_CMD_SET_DEVICE_ID_AT 0x43 // Imposta l'id del dispositivo all'index desiderato nella lista di ID
  #define SPI_CMD_MEASURE_DISTANCE 0x50 // Esegue misurazioni multiple e restituisce media, dato id
+ #define SPI_CMD_MEASURE_ALL_DISTANCES 0x51 // Misura le distanze average da tutti i dispositivi settati
 
  // Misurazioni media
  typedef struct {
@@ -178,6 +180,8 @@
  static average_measurement_t current_avg_measurement = {0};
  //flag booleana che indica misurazioni in corso
  static volatile bool performing_avg_measurement = false;
+ static average_measurement_t measurements[MAX_RESPONDERS];
+ static uint8_t num_valid_measurements = 0;
 
  extern responder_distance_t distances[MAX_RESPONDERS];
 
@@ -529,6 +533,30 @@ void vInterruptInit (void)
     
  }
 
+ static average_measurement_t measure_all_distances(uint8_t num_samples){
+    // Controllo se il dispositivo è in configurazione non accetta
+    if(device_mode == DEVICE_MODE_RESPONDER){
+      printf("Misurazioni non possibili in modalità risponditore\r\n");
+    }
+
+    average_measurement_t temp_buf;
+
+    for(int i=0; i< MAX_RESPONDERS; i++){
+      if(anchor_enabled[i] && anchor_ids[i]!=DEVICE_ID) {
+        temp_buf = perform_average_measurement(anchor_ids[i], num_samples);
+
+        measurements[i] = temp_buf;
+
+        if(measurements[i].valid){
+          num_valid_measurements++;
+        }
+      }
+      if(new_spi_command_received){
+        break;
+      }
+    }
+ }
+
 
 
 /*-------------------------------------fine------------------------------------*/
@@ -573,6 +601,10 @@ static void prepare_spi_response(uint8_t command_processed){
         case SPI_CMD_MEASURE_DISTANCE:
           prepare_avg_measurement_for_spi();
           break;
+        
+        case SPI_CMD_MEASURE_ALL_DISTANCES:
+          prepare_all_measurements_for_spi();
+          break;
 
         default:
              // Unknown command or error during processing
@@ -581,6 +613,44 @@ static void prepare_spi_response(uint8_t command_processed){
              memset(&m_spi_tx_buf[2], 0, SPI_TX_DATA_BUFFER_SIZE - 2);
              break;
     }
+}
+
+static void prepare_all_measurements_for_spi(void) {
+  // Prima posizione: numero di misurazioni valide
+    m_spi_tx_buf[0] = num_valid_measurements;
+    
+    uint8_t pos = 1;
+    
+    // Per ogni misurazione valida
+    for (int i = 0; i < num_valid_measurements; i++) {
+        // Verifica se abbiamo spazio sufficiente nel buffer
+        if (pos + 18 > SPI_TX_DATA_BUFFER_SIZE) {
+            printf("Warning: SPI buffer too small for all measurements\r\n");
+            break;  // Evita overflow del buffer
+        }
+        
+        average_measurement_t *meas = &measurements[i];
+        
+        // Bytes 0-7: ID del target (little-endian)
+        for (int j = 0; j < 8; j++) {
+            m_spi_tx_buf[pos++] = (uint8_t)((meas->target_id >> (j * 8)) & 0xFF);
+        }
+        
+        // Byte 8: Numero di campioni validi
+        m_spi_tx_buf[pos++] = meas->samples_count;
+        
+        // Bytes 9-16: Distanza media
+        memcpy(&m_spi_tx_buf[pos], &meas->average_distance, sizeof(double));
+        pos += sizeof(double);
+    }
+    
+    // Pulisci il resto del buffer
+    if (pos < SPI_TX_DATA_BUFFER_SIZE) {
+        memset(&m_spi_tx_buf[pos], 0, SPI_TX_DATA_BUFFER_SIZE - pos);
+    }
+
+
+
 }
 
 // Funzione per preparare dati in risposta SPI
@@ -880,6 +950,10 @@ static void process_spi_command(uint8_t *cmd_data, uint8_t cmd_len)
           }
           break;
 
+        case SPI_CMD_MEASURE_ALL_DISTANCES:
+          measure_all_distances(10);
+          break;
+
         case SPI_CMD_GET_INFO:
              // Action is to prepare response
              break;
@@ -1116,7 +1190,7 @@ static void spi_slave_init(void)
                  //NRF_LOG_FLUSH();
             }
         }
-        if(!in_config_mode && continous_measurements){
+        
           // --- 2. Handle UWB Mode Switching ---
           //printf("Gestisco cambio di modalità\r\n");
           if (bool_mode_changed) {
@@ -1142,7 +1216,8 @@ static void spi_slave_init(void)
             bool_mode_changed = false; // Reset the flag
             //NRF_LOG_FLUSH();
           }
-
+          
+          if(!in_config_mode && device_mode == DEVICE_MODE_RESPONDER){
           // --- 3. Perform UWB Ranging ---
           //printf("Gestisco misurazioni\r\n");
           if (device_mode == DEVICE_MODE_INITIATOR) {

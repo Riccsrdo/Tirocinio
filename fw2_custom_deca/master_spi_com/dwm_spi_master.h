@@ -11,9 +11,15 @@ che verranno processati e che, a seconda del comando, prevederanno una risposta.
 #define CMD_GET_DISTANCES  0x01
 #define CMD_SET_MODE_INIT  0x10
 #define CMD_SET_MODE_RESP  0x11
-#define CMD_SET_ID         0x20 // Seguito da 1 byte ID
-#define CMD_ENABLE_ANCHOR  0x30 // Seguito da 1 byte ID
-#define CMD_DISABLE_ANCHOR 0x31 // Seguito da 1 byte ID
+#define CMD_SET_ID         0x20 // Seguito da 8 byte ID
+#define CMD_ENABLE_ANCHOR  0x30 // Seguito da 8 byte ID
+#define CMD_DISABLE_ANCHOR 0x31 // Seguito da 8 byte ID
+#define CMD_ENTER_CONFIG_MODE 0x40 // Comando per entrare in modalità configurazione e settare parametri come ID comunicazioni
+#define CMD_EXIT_CONFIG_MODE 0x41 // Esci dalla modalità di configurazione e salva le modifiche
+#define CMD_SET_NUM_DEVICES 0x42 // Imposta il numero di dispositivi con cui si vuole comunicare
+#define CMD_SET_DEVICE_ID_AT 0x43 // Imposta l'id del dispositivo all'index desiderato nella lista di ID
+#define CMD_MEASURE_DISTANCE 0x50 // Esegue misurazioni multiple e restituisce media, dato id
+#define CMD_MEASURE_ALL_DISTANCES 0x51 // Misura le distanze average da tutti i dispositivi settati
 #define CMD_GET_INFO       0xFE
 #define CMD_GET_HELP       0xFF
 
@@ -26,6 +32,22 @@ typedef struct {
   double distance;
   int valid; // Usiamo int come flag booleano (0 = non valido, 1 = valido)
 } ResponderInfo;
+ 
+// -- Struttura per misurazioni medie --
+typedef struct {
+  uint64_t id;
+  double average_distance;
+  uint8_t samples_count;
+  uint8_t requested_samples;
+  int valid;
+} AverageMeasurement;
+
+// -- Struttura per info di configurazione --
+typedef struct {
+  uint8_t device_mode; // 0 initiator, 1 responder
+  uint64_t device_id;
+  uint8_t config_mod_active; // 1 se in modalità configurazione
+} DeviceInfo;
 
 /**
  * @brief Inizializza l'interfaccia SPI.
@@ -84,6 +106,83 @@ int dwm_request_distances(ResponderInfo* responder_array, int max_responders, ui
 // --- Aggiungi qui prototipi per altre funzioni se necessario ---
 // int dwm_set_id(uint8_t new_id);
 // int dwm_enable_anchor(uint8_t anchor_id);
+
+/**
+ * @brief Imposta id del dispositivo (64 bit)
+ * 
+ * @param new_id Id da impostare
+ * @return 0 in caso di successo, -1 di fallimento
+ */
+int dwm_set_id(uint64_t new_id);
+
+/**
+ * @brief Abilita un'ancora specifica
+ * 
+ * @param anchor_id del dispositivo da abilitare
+ * @return 0 in caso di successo, -1 di fallimento
+ */
+int dwm_enable_anchor(uint64_t anchor_id);
+
+/**
+ * @brief Disabilita un'ancora specifica
+ * 
+ * @param anchor_id del dispositivo da disabilitare
+ * @return 0 in caso di successo, -1 di fallimento
+ */
+int dwm_disable_anchor(uint64_t anchor_id);
+
+/**
+ * @brief Entra in modalità configurazione, permettendo di
+ * impostare id dei dispositivi, e altre impostazioni
+ * 
+ * @return 0 in caso di successo, -1 di fallimento
+ */
+int dwm_enter_config_mode(void);
+
+/**
+ * @brief Imposta numero dispositivi attualmente in funzione
+ * 
+ * @param num_devices numero dispositivi
+ * @return 0 in caso di successo, -1 di fallimento
+ */
+int dwm_set_num_devices(uint8_t num_devices);
+
+/**
+ * @brief Imposta id del dispositivo dato un certo index
+ * dell'array
+ * 
+ * @param index dell'array dei dispositivi sul DWM
+ * @param device_id a 64 bit del dispositivo che si vuole
+ * impostare
+ * @return 0 in caso di successo, -1 di fallimento
+ */
+int dwm_set_device_id_at(uint8_t index, uint64_t device_id);
+
+/**
+ * @brief Esegue misurazioni dato un certo dispositivo
+ * con un certo id e ne restituisce la media
+ * 
+ * @param target_id del dispositivo a cui si vuole effettuare
+ * la misurazione
+ * @param num_samples Numero di campioni di misurazioni da
+ * effettuare, 10 è standard
+ * @param result Puntatore a struttura AverageMeasurement
+ * popolata
+ * @return 0 in caso di successo, -1 di fallimento
+ */
+int dwm_measure_average(uint64_t target_id, uint8_t num_samples, AverageMeasurement* result);
+
+/**
+ * @brief Esegue misurazioni verso tutti i dispositivi
+ * dati gli id configurati su uno di essi, e li restituisce
+ * 
+ * @param num_samples numero di misurazioni standard, 10 è lo standard
+ * @param results Array di AverageMeasurement popolato
+ * @param max_results Dimensione massima dell'array resylts
+ * @param out_valid_count numero di misurazioni valide ottenute
+ * @return 0 in caso di successo, -1 di fallimento
+ */
+int dwm_measure_average_all(uint8_t num_samples, AverageMeasurement* results, int max_results, uint8_t* out_valid_count);
 
 
 #endif // DWM_SPI_MASTER_RPI_H
