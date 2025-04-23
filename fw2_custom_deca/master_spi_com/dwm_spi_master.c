@@ -326,5 +326,195 @@ int dwm_set_device_id_at(uint8_t index, uint64_t device_id){
 }
 
 int dwm_measure_average(uint64_t target_id, uint8_t num_samples, AverageMeasurement* result){
+    // Controllo che il puntatore sia valido
+    if(!result) {
+        fprintf(stderr, "Errore: Parametri non validi per dwm_measure_average.\n");
+        return -1;
+    }
+
+    // alloco memoria
+    memset(result, 0, sizeof(AverageMeasurement));
+
+    uint8_t tx_buf[10]; // comando + 8 byte ID + 1 byte num_misurazioni
+    uint8_t rx_buf[sizeof(double) + 12] // buffer lettura risposta
+    uint8_t tx_dummy = 0x00;
+
+    tx_buf[0] = CMD_MEASURE_DISTANCE;
+
+    for (int i = 0; i < 8; i++) {
+        tx_buf[i+1] = (uint8_t)((target_id >> (i * 8)) & 0xFF);
+    }
+
+    size_t cmd_len = 10;
+    tx_buf[9] = 10;
+
+    int ret = dwm_spi_transfer(tx_buf, rx_buf, cmd_len);
+    if (ret != 0) {
+        fprintf(stderr, "Errore durante l'invio del comando MEASURE_AVERAGE.\n");
+        return -1;
+    }
+
+    // Attesa misurazioni, 200ms per campione
+    int wait_time = 1000; // ms
+    usleep(wait_time * 1000);
+
+    // leggo flag di validità
+    ret = dwm_spi_transfer(&tx_dummy, rx_buf, 1);
+    if (ret != 0) return -1;
+    result->valid = rx_buf[0];
+
+    // Leggi numero di campioni richiesti
+    ret = dwm_spi_transfer(&tx_dummy, rx_buf, 1);
+    if (ret != 0) return -1;
+    result->requested_samples = rx_buf[0];
     
+    // Leggi numero di campioni validi
+    ret = dwm_spi_transfer(&tx_dummy, rx_buf, 1);
+    if (ret != 0) return -1;
+    result->samples_count = rx_buf[0];
+    
+    // Leggi ID target (8 byte)
+    uint64_t id = 0;
+    for (int i = 0; i < 8; i++) {
+        ret = dwm_spi_transfer(&tx_dummy, &rx_buf[i], 1);
+        if (ret != 0) return -1;
+        id |= ((uint64_t)rx_buf[i] << (i * 8));
+    }
+    result->id = id;
+    
+    // Leggi distanza media
+    ret = dwm_spi_transfer(&tx_dummy, rx_buf, sizeof(double));
+    if (ret != 0) return -1;
+    memcpy(&(result->average_distance), rx_buf, sizeof(double));
+    
+    if (result->valid) {
+        printf("Misurazione media completata. Target: 0x%llx, Campioni: %d/%d, Distanza: %.3f m\n",
+               (unsigned long long)result->id, result->samples_count, result->requested_samples,
+               result->average_distance);
+    } else {
+        printf("Misurazione media fallita. Target: 0x%llx, Campioni: %d/%d\n",
+               (unsigned long long)result->id, result->samples_count, result->requested_samples);
+    }
+    
+    return 0;
+
+}
+
+int dwm_measure_average_all(uint8_t num_samples, AverageMeasurement* results, int max_results, uint8_t out_valid_count){
+    // Controllo che i puntatori  e i parametri siano corretti
+    if( !results || !out_valid_count || max_results <= 0){
+        fprintf(stderr, "Errore nei parametri della funzione di measure_average_all\n");
+        return -1;
+    }
+
+    uint8_t tx_buf[2]; // comando + num_samples
+    uint8_t rx_count_buf[1]; // conteggio misurazioni lette
+    uint8_t tx_dummy = 0x00;
+    int ret;
+
+    // Invalido risultati salvati attualmente nell'array
+    for(int i=0;i<MAX_DWM_RESPONDERS;i++){
+        results[i].valid=0;
+    }
+
+    //Salvo comando nel buffer di invio
+    tx_buf[0]=CMD_MEASURE_ALL_DISTANCES;
+
+    //Imposto num__samples
+    tx_buf[1]=10;
+
+    // invio comando
+    ret = dwm_spi_transfer(tx_buf, rx_count_buf, 2);
+    if(ret!=0){
+        fprintf(stderr, "Errore nell'invio comando di misurazione tutte distanze\n");
+        return -1;
+    }
+
+    printf("Avviate misurazioni verso tutti i dispositivi\n");
+
+    // Attendo 
+    int wait_time = num_samples * MAX_DWM_RESPONDERS * 200;
+    usleep(wait_time*1000);
+
+    // Leggo numero misurazioni valide
+    ret = dwm_spi_transfer(&tx_dummy, rx_count_buf, 1);
+    if(ret!=0) return -1;
+
+    uint8_t count = rx_count_buf[0];
+    *out_valid_count = count;
+
+    if(count == 0){
+        printf("Nessuna misurazione riportata\n");
+        return 0;
+    }
+
+    if(count > max_results){
+        fprintf(stderr, "Troppe misurazioni catturate, errore\n");
+        count=max_results;
+    }
+
+    printf("Ricevute %d misurazioni valide\n", count);
+
+    const int bytes_per_measurement = 8 + 1 + 8; // 8 byte id + 1 byte conteggio + 8 byte distanza media
+    const int total_response_size = count * bytes_per_measurement;
+
+    // Alloco buffer che contenga l'intera risposta
+    uint8_t* response_buffer = (uint8_t*)malloc(total_response_size);
+    if(!response_buffer){
+        fprintf(stderr, "Errore nell'allocazione memoria per il buffer di risposta\n");
+        return -1; 
+    }
+
+    // Leggo la risposta, creando un buffer di dummy bytes da inviare
+    uint8_t tx_dummy_buf = (uint8_t*)malloc(total_response_size);
+    if(!tx_dummy_buf){
+        fprintf(stderr, "Errore nell'allocazione memoria per il buffer di invio\n");
+        return -1; 
+    }
+    memset(tx_dummy_buf, 0, sizeof(tx_dummy_buf));
+
+    ret = dwm_spi_transfer(tx_dummy_buf, response_buffer, total_response_size);
+    free(tx_dummy_buf);
+    if(ret!=0){
+        fprintf(stderr, "Errore nella lettura risposta completa\n");
+        free(response_buffer);
+        return -1;
+    }
+
+
+    // Analizzo le singole entry della risposta
+    for(int i=0;i<count; i++){
+
+        // preparo offset di lettura nel buffer di risposta
+        int offset = i * bytes_per_measurement;
+
+        // Estraggo ID
+        uint64_t id = 0;
+        for(int j=0; j<8;j++){
+            id |= ((uint64_t)response_buffer[offset + j] << (j*8));
+        }
+
+        results[i].id = id;
+
+        //Estraggo numero campioni validi
+        results[i].samples_count = response_buffer[offset+8];
+
+        // Estraggo distanza media
+        memcpy(&(results[i].average_distance), &response_buffer[offset+9], sizeof(double));
+
+        // imposto altri campi
+        results[i].valid = 1;
+        results[i].requested_samples = num_samples > 0 ? num_samples : 10;
+
+        printf("Misurazione %d: Target: 0x%llx, Campioni: %d, Distanza: %.3f m\n",
+        i+1, (unsigned long long)results[i].id, results[i].samples_count, results[i].average_distance);
+    }
+
+
+
+
+
+    free(response_buffer);
+    return 0;
+
 }

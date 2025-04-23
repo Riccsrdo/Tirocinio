@@ -30,9 +30,8 @@ Una volta fatto questo sarà possibile effettuare una build del progetto, e per 
 
 Una volta effettuati questi passaggi dovrebbe essere possibile utilizzare il dispositivo con il firmware custom.
 
-## Ultimo aggiornamento - 18_04 11:40
-Aggiunti alcuni comandi di SPI che permettono di settare alcune configurazioni del dispositivo quali gli ID dei dispositivi con cui vogliamo comunicare, oltre al comando che permette di settare l'id del dispositivo come uint64 invece che come uint8.
-Inoltre, implementata funzione che dato un certo id, e un numero di misurazioni a scelta, effettua quel numero di misurazioni e ne calcola la media.
+## Ultimo aggiornamento - 23_04 9:40
+Completati i file di funzioni per la comunicazione dal master allo slave tramite SPI.
 Ancora da testare.
 
 
