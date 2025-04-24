@@ -49,7 +49,7 @@ int dwm_spi_init(const char* device, uint32_t speed, uint8_t mode) {
     ret = ioctl(spi_fd, SPI_IOC_RD_MODE, &spi_mode);
     if (ret == -1) {
         print_spi_error("Errore lettura SPI mode (RD)");
-        // Continua comunque? Forse non critico.
+        
     }
 
     // Imposta bits per word
@@ -107,7 +107,7 @@ int dwm_spi_transfer(uint8_t* tx_buf, uint8_t* rx_buf, size_t len) {
         .delay_usecs = 0, // Nessun ritardo tra i byte
         .speed_hz = spi_speed,
         .bits_per_word = spi_bits,
-        // .cs_change = 0, // Non cambiare CS durante il trasferimento (se len > 1)
+        // .cs_change = 0, 
     };
 
     int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr); // Invia 1 struttura spi_ioc_transfer
@@ -229,7 +229,7 @@ int dwm_enable_anchor(uint64_t anchor_id){
     tx_buff[0] = CMD_ENABLE_ANCHOR;
     //popolo array con id scomposto in 8 byte
     for(int i=0; i<8; i++){
-        tx_buff[i+1] = (uint8_t)((new_id >> (i*8)) & 0xFF);
+        tx_buff[i+1] = (uint8_t)((anchor_id >> (i*8)) & 0xFF);
     }
 
     // invio e ricevo risposta
@@ -249,7 +249,7 @@ int dwm_disable_anchor(uint64_t anchor_id){
     tx_buff[0] = CMD_DISABLE_ANCHOR;
     //popolo array con id scomposto in 8 byte
     for(int i=0; i<8; i++){
-        tx_buff[i+1] = (uint8_t)((new_id >> (i*8)) & 0xFF);
+        tx_buff[i+1] = (uint8_t)((anchor_id >> (i*8)) & 0xFF);
     }
 
     // invio e ricevo risposta
@@ -312,7 +312,7 @@ int dwm_set_device_id_at(uint8_t index, uint64_t device_id){
 
     //popolo array con id scomposto in 8 byte
     for(int i=0; i<8; i++){
-        tx_buff[i+2] = (uint8_t)((device_id >> (i*8)) & 0xFF);
+        tx_buf[i+2] = (uint8_t)((device_id >> (i*8)) & 0xFF);
     }
 
     int ret = dwm_spi_transfer(tx_buf, rx_buf, sizeof(tx_buf));
@@ -336,7 +336,7 @@ int dwm_measure_average(uint64_t target_id, uint8_t num_samples, AverageMeasurem
     memset(result, 0, sizeof(AverageMeasurement));
 
     uint8_t tx_buf[10]; // comando + 8 byte ID + 1 byte num_misurazioni
-    uint8_t rx_buf[sizeof(double) + 12] // buffer lettura risposta
+    uint8_t rx_buf[sizeof(double) + 12]; // buffer lettura risposta
     uint8_t tx_dummy = 0x00;
 
     tx_buf[0] = CMD_MEASURE_DISTANCE;
@@ -400,7 +400,7 @@ int dwm_measure_average(uint64_t target_id, uint8_t num_samples, AverageMeasurem
 
 }
 
-int dwm_measure_average_all(uint8_t num_samples, AverageMeasurement* results, int max_results, uint8_t out_valid_count){
+int dwm_measure_average_all(uint8_t num_samples, AverageMeasurement* results, int max_results, uint8_t* out_valid_count){
     // Controllo che i puntatori  e i parametri siano corretti
     if( !results || !out_valid_count || max_results <= 0){
         fprintf(stderr, "Errore nei parametri della funzione di measure_average_all\n");
@@ -466,15 +466,15 @@ int dwm_measure_average_all(uint8_t num_samples, AverageMeasurement* results, in
     }
 
     // Leggo la risposta, creando un buffer di dummy bytes da inviare
-    uint8_t tx_dummy_buf = (uint8_t*)malloc(total_response_size);
-    if(!tx_dummy_buf){
-        fprintf(stderr, "Errore nell'allocazione memoria per il buffer di invio\n");
-        return -1; 
-    }
-    memset(tx_dummy_buf, 0, sizeof(tx_dummy_buf));
-
-    ret = dwm_spi_transfer(tx_dummy_buf, response_buffer, total_response_size);
-    free(tx_dummy_buf);
+    uint8_t* tx_dummy_buf = (uint8_t*)malloc(total_response_size);
+if (!tx_dummy_buf) {
+    fprintf(stderr, "Errore nell'allocazione memoria per il buffer di invio\n");
+    free(response_buffer);
+    return -1;
+}
+memset(tx_dummy_buf, 0, total_response_size);
+ret = dwm_spi_transfer(tx_dummy_buf, response_buffer, total_response_size);
+free(tx_dummy_buf);
     if(ret!=0){
         fprintf(stderr, "Errore nella lettura risposta completa\n");
         free(response_buffer);

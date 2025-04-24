@@ -26,6 +26,8 @@ che verranno processati e che, a seconda del comando, prevederanno una risposta.
 #define MAX_DWM_RESPONDERS 16 // Massimo numero atteso dal DWM, modificabile in caso di modifica
 // al firmware base del dispositivo
 
+/*-----Strutture di Utilità-------*/
+
 // --- Struttura per contenere i dati delle distanze ---
 typedef struct {
   uint8_t id;
@@ -49,12 +51,14 @@ typedef struct {
   uint8_t config_mod_active; // 1 se in modalità configurazione
 } DeviceInfo;
 
+/*----Funzioni di inizializzazione e gestione SPI -----*/
+
 /**
- * @brief Inizializza l'interfaccia SPI.
+ * @brief Inizializza l'interfaccia SPI. Setta alcuni parametri come velocità trasmissione, modalità, ecc.
  *
  * @param device Path del device SPI (es. "/dev/spidev0.0").
  * @param speed Velocità SPI in Hz (es. 2000000).
- * @param mode Modalità SPI (0, 1, 2, o 3). Mode 0 è tipico per nRF52.
+ * @param mode Modalità SPI (0, 1, 2, o 3).
  * @return 0 in caso di successo, -1 in caso di errore.
  */
 int dwm_spi_init(const char* device, uint32_t speed, uint8_t mode);
@@ -65,7 +69,7 @@ int dwm_spi_init(const char* device, uint32_t speed, uint8_t mode);
 void dwm_spi_close(void);
 
 /**
- * @brief Esegue una transazione SPI (invio e ricezione simultanei).
+ * @brief Esegue una transazione SPI (invio e ricezione simultanei). 
  *
  * @param tx_buf Buffer con i dati da inviare.
  * @param rx_buf Buffer dove memorizzare i dati ricevuti.
@@ -92,7 +96,7 @@ int dwm_send_command(uint8_t command);
 int dwm_send_command_with_arg(uint8_t command, uint8_t argument);
 
 /**
- * @brief Richiede e legge i dati delle distanze dal DWM1001.
+ * @brief DEPRECATA. Richiede e legge i dati delle distanze dal DWM1001. 
  *
  * @param responder_array Un array di struct ResponderInfo fornito dal chiamante,
  * che verrà popolato con i dati ricevuti.
@@ -103,7 +107,6 @@ int dwm_send_command_with_arg(uint8_t command, uint8_t argument);
  */
 int dwm_request_distances(ResponderInfo* responder_array, int max_responders, uint8_t* out_valid_count);
 
-// --- Aggiungi qui prototipi per altre funzioni se necessario ---
 // int dwm_set_id(uint8_t new_id);
 // int dwm_enable_anchor(uint8_t anchor_id);
 
@@ -116,7 +119,9 @@ int dwm_request_distances(ResponderInfo* responder_array, int max_responders, ui
 int dwm_set_id(uint64_t new_id);
 
 /**
- * @brief Abilita un'ancora specifica
+ * @brief Abilita un'ancora specifica, ovvero permette di abilitare
+ * un dispositivo nell'array di dispositivi abilitati per la comunicazione
+ * sul dwm1001-dev.
  * 
  * @param anchor_id del dispositivo da abilitare
  * @return 0 in caso di successo, -1 di fallimento
@@ -124,7 +129,8 @@ int dwm_set_id(uint64_t new_id);
 int dwm_enable_anchor(uint64_t anchor_id);
 
 /**
- * @brief Disabilita un'ancora specifica
+ * @brief Disabilita un'ancora specifica, disabilitandola nell'array di dispositivi abilitati sul
+ * dwm1001-dev.
  * 
  * @param anchor_id del dispositivo da disabilitare
  * @return 0 in caso di successo, -1 di fallimento
@@ -140,7 +146,7 @@ int dwm_disable_anchor(uint64_t anchor_id);
 int dwm_enter_config_mode(void);
 
 /**
- * @brief Imposta numero dispositivi attualmente in funzione
+ * @brief Imposta numero dispositivi attualmente in funzione con cui effettuare la comunicazione
  * 
  * @param num_devices numero dispositivi
  * @return 0 in caso di successo, -1 di fallimento
@@ -149,7 +155,7 @@ int dwm_set_num_devices(uint8_t num_devices);
 
 /**
  * @brief Imposta id del dispositivo dato un certo index
- * dell'array
+ * dell'array dei dispositivi sul dwm1001-dev
  * 
  * @param index dell'array dei dispositivi sul DWM
  * @param device_id a 64 bit del dispositivo che si vuole
