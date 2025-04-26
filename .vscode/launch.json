@@ -8,8 +8,8 @@
       "args": [],
       "stopAtEntry": false,
       "externalConsole": true,
-      "cwd": "c:/Users/ricca/Desktop/GitHub/Tirocinio/fw2_custom_deca",
-      "program": "c:/Users/ricca/Desktop/GitHub/Tirocinio/fw2_custom_deca/build/Debug/outDebug",
+      "cwd": "c:/Users/ricca/Desktop/GitHub/Tirocinio/fw2_custom_deca/master_spi_com",
+      "program": "c:/Users/ricca/Desktop/GitHub/Tirocinio/fw2_custom_deca/master_spi_com/build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [

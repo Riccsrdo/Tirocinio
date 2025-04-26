@@ -42,6 +42,7 @@
  //#include "ss_init_main.h"
  #include "nrf_drv_gpiote.h"
  #include "utils.h"
+ #include "math.h"
  //#include "UART.h"
  
  /* Dichiaro in precedenza le funzioni che dovrÃ² usare successivamente */
@@ -64,6 +65,7 @@
  
  //-----------------dw1000----------------------------
  
+ // Configurazione per condizioni di LoS
  static dwt_config_t config = {
      5,               /* Channel number. */
      DWT_PRF_64M,     /* Pulse repetition frequency. */
@@ -75,6 +77,20 @@
      DWT_BR_6M8,      /* Data rate. */
      DWT_PHRMODE_STD, /* PHY header mode. */
      (129 + 8 - 8)    /* SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only. */
+ };
+
+ // Configurazione per condizioni di NLoS
+ static dwt_config_t nlos_config = {
+     5,               /* Channel number. */
+     DWT_PRF_64M,     /* Pulse repetition frequency. */
+     DWT_PLEN_1024,    /* Preamble length. Used in TX only. */
+     DWT_PAC32,        /* Preamble acquisition chunk size. Used in RX only. */
+     10,              /* TX preamble code. Used in TX only. */
+     10,              /* RX preamble code. Used in RX only. */
+     0,               /* 0 to use standard SFD, 1 to use non-standard SFD. */
+     DWT_BR_6M8,      /* Data rate. */
+     DWT_PHRMODE_STD, /* PHY header mode. */
+     (1025 + 64 - 32)    /* SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only. */
  };
  
  /* Preamble timeout, in multiple of PAC size. See NOTE 3 below. */
@@ -117,6 +133,9 @@
  volatile uint64_t DEVICE_ID = 1; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
  volatile bool anchor_enabled[MAX_RESPONDERS] = {true, true, false, false, false, false, false, false,
                                                         false, false, false, false, false, false, false, false}; /* Abilitazione dei risponditori */
+
+
+ volatile bool nlos_mode=false; // flag booleana di check se dispositivo in modalità NLoS
  
 #if 1
 
@@ -167,6 +186,9 @@
  #define SPI_CMD_MEASURE_DISTANCE 0x50 // Esegue misurazioni multiple e restituisce media, dato id
  #define SPI_CMD_MEASURE_ALL_DISTANCES 0x51 // Misura le distanze average da tutti i dispositivi settati
 
+ #define SPI_SET_NLOS_MODE 0x60 // comando che permette di setuppare la modalità NLOS usando pacchetti più grandi
+ #define SPI_SET_LOS_MODE 0x61 // imposta a LoS con pacchetti più piccoli
+
  // Misurazioni media
  typedef struct {
   uint64_t target_id;
@@ -192,6 +214,8 @@
  static volatile uint64_t config_anchor_ids[MAX_RESPONDERS];
  static volatile bool config_anchor_enabled[MAX_RESPONDERS];
  static volatile bool continous_measurements = false;
+ static volatile uint8_t current_spi_command = 0; // Store command being processed
+
 
 
  /*------------------------------fine-------------------------------*/
@@ -466,6 +490,17 @@ void vInterruptInit (void)
 
 /*-------------------------------------misurazioni average----------------------*/
 
+// Funzione di utilità per la comparazione di numeri double
+int compare_doubles(const void * a, const void * b){
+  if(*(double*)a > *(double*)b){
+    return 1;
+  }
+  else if (*(double*)a < *(double*)b){
+    return -1;
+  } else
+    return 0;
+}
+
  static average_measurement_t perform_average_measurement(uint64_t target_id, uint8_t num_samples) {
     average_measurement_t result = {
       .target_id = target_id,
@@ -501,6 +536,9 @@ void vInterruptInit (void)
     double sum_distances = 0.0;
     uint8_t valid_samples = 0;
 
+    // Buffer per valori mediani
+    double measurements[num_samples];
+
     // Eseguo 10 misurazioni
     for(uint8_t i = 0; i< num_samples; i++){
       
@@ -509,6 +547,7 @@ void vInterruptInit (void)
       // controllo se la misurazione è valida
       if(distances[target_index].valid){
         sum_distances += distances[target_index].distance;
+        measurements[valid_samples] = distances[target_index].distance;
         valid_samples++;
       }
 
@@ -521,9 +560,33 @@ void vInterruptInit (void)
     }
 
     if(valid_samples>0){
+      // Effettuo un sort per prendere il valore mediano
+      qsort(measurements, valid_samples, sizeof(double), compare_doubles);
+
+      if(valid_samples % 2 == 1) { // Se l'array vanta di un numero dispari di misurazioni
+        result.average_distance = measurements[valid_samples/2];
+      } else { // altrimenti se sono pari
+        result.average_distance = (measurements[valid_samples/2 - 1] + measurements[valid_samples/2])/2.0;
+      }
+
+      
       result.valid=true;
-      result.average_distance = sum_distances / valid_samples;
+      // result.average_distance = sum_distances / valid_samples; // rimosso per il nuovo metodo che usa mediana
       result.samples_count = valid_samples;
+
+      // Calcolo deviazione standard per verificare se sono in condizioni di NLoS
+      double sum_sq_diff = 0.0;
+      for(int i=0;i<valid_samples; i++){
+        double diff = measurements[i] - result.average_distance;
+        sum_sq_diff += diff * diff;
+      }
+
+      double std_dev = sqrt(sum_sq_diff / valid_samples);
+
+      // se la deviazione standard è troppo alta, c'è la possibilità che siamo in situazione di NLoS
+      // TODO: Implementare controllo e gestire cambio automatico a modalità NLoS?
+
+      
 
       printf("Distanza media calcolata dal dispositivo %08lX%08lX è: %f\r\n", id_high, id_low, result.average_distance);
     }
@@ -605,6 +668,9 @@ static void prepare_spi_response(uint8_t command_processed){
         case SPI_CMD_MEASURE_ALL_DISTANCES:
           prepare_all_measurements_for_spi();
           break;
+
+        case SPI_SET_LOS_MODE:
+        case SPI_SET_NLOS_MODE:
 
         default:
              // Unknown command or error during processing
@@ -961,6 +1027,18 @@ static void process_spi_command(uint8_t *cmd_data, uint8_t cmd_len)
         case SPI_CMD_GET_HELP:
              // Action is to prepare response
              break;
+        
+        case SPI_SET_NLOS_MODE:
+            // imposto la modalità a NLoS
+            nlos_mode = true;
+            dwt_configure(&nlos_config);
+            break;
+        
+        case SPI_SET_LOS_MODE:
+            // imposto modalità a LoS
+            nlos_mode=false;
+            dwt_configure(&config);
+            break;
 
         default:
             // Unknown command - prepare_spi_response will handle this
@@ -974,12 +1052,14 @@ Funzione che gestisce eventi SPI con interrupt.
 static void spis_event_handler(nrf_drv_spis_event_t event)
 {
     printf("SPI HANDLER TRIGGERED! RX bytes: %d\r\n", event.rx_amount);
+
     if (event.evt_type == NRF_DRV_SPIS_XFER_DONE)
     {   
-        printf("SPI XFER DONE, RX bytes: %d\r\n", event.rx_amount);
         // Check if there are incoming commands
         if (!new_spi_command_received)
-        {
+        {   
+            
+        
             uint8_t bytes_received = event.rx_amount;
             if (bytes_received > SPI_CMD_BUFFER_SIZE) {
                 bytes_received = SPI_CMD_BUFFER_SIZE;
@@ -991,10 +1071,28 @@ static void spis_event_handler(nrf_drv_spis_event_t event)
             } else {
                 spi_cmd_length = 0;
             }
+        
         }
 
         // Set up buffers for the next transaction
         APP_ERROR_CHECK(nrf_drv_spis_buffers_set(&m_spis, m_spi_tx_buf, SPI_TX_DATA_BUFFER_SIZE, m_spi_rx_buf, SPI_CMD_BUFFER_SIZE));
+        #if 0
+        printf("SPI XFER DONE, RX bytes: %d\r\n", event.rx_amount);
+        // 1. Copia il comando ricevuto e segnala
+        if (!new_spi_command_received) {
+            uint8_t bytes_received = event.rx_amount;
+            memcpy(spi_cmd_buffer, m_spi_rx_buf, bytes_received);
+            spi_cmd_length = bytes_received;
+            new_spi_command_received = true;
+        }
+
+        // 2. Prepara la risposta PRIMA di riconfigurare i buffer
+        prepare_spi_response(current_spi_command); // Aggiungi questa linea
+
+        // 3. Riconfigura i buffer con i nuovi dati
+        APP_ERROR_CHECK(nrf_drv_spis_buffers_set(&m_spis, m_spi_tx_buf, SPI_TX_DATA_BUFFER_SIZE, m_spi_rx_buf, SPI_CMD_BUFFER_SIZE));
+        //#endif
+        #endif
     }
 }
 
@@ -1002,7 +1100,11 @@ static void spis_event_handler(nrf_drv_spis_event_t event)
 Funzione che inizializza dispositivo come slave SPI
 */
 static void spi_slave_init(void)
-{
+{   
+    nrf_gpio_cfg_output(7);
+  nrf_gpio_pin_write(7, 0);
+    memset(m_spi_tx_buf, 0xAA, SPI_TX_DATA_BUFFER_SIZE); // Inizializza con pattern alternato
+    nrf_gpio_cfg_output(MY_SPIS_MISO_PIN);
     nrf_drv_spis_config_t spis_config = NRF_DRV_SPIS_DEFAULT_CONFIG;
     spis_config.csn_pin   = 3; //MY_SPIS_CSN_PIN;
     spis_config.miso_pin  = 7; //MY_SPIS_MISO_PIN;
@@ -1130,7 +1232,7 @@ static void spi_slave_init(void)
     printf("Device id: %08lX%08lX \r\n", id_alta, id_bassa);
    }
 
-   uint8_t current_spi_command = 0; // Store command being processed
+   //uint8_t current_spi_command = 0; // Store command being processed
  
  
  #ifdef USE_FREERTOS

@@ -1,17 +1,9 @@
 #include "dwm_spi_master.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
-#include <fcntl.h>      
-#include <unistd.h>    
-#include <sys/ioctl.h>  
-#include <linux/spi/spidev.h> 
 
 // Variabili statiche per la gestione del device SPI
 static int spi_fd = -1; // File descriptor per il device SPI
-static uint8_t spi_mode = 2;
-static uint8_t spi_bits = 8;
+static uint8_t spi_mode = 2; // Modalità di connessione SPI
+static uint8_t spi_bits = 8; // Bits in trasferimento
 static uint32_t spi_speed = 2000000; // Default 2 MHz
 
 // Funzione interna per gestire errori
@@ -111,7 +103,7 @@ int dwm_spi_transfer(uint8_t* tx_buf, uint8_t* rx_buf, size_t len) {
     };
 
     int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr); // Invia 1 struttura spi_ioc_transfer
-    if (ret < 1) { // ioctl ritorna 0 o -1 in caso di fallimento, >0 in caso di successo
+    if (ret < 1) { // 
         print_spi_error("Errore durante SPI transfer (ioctl)");
         return -1;
     }
@@ -510,11 +502,7 @@ int dwm_measure_average_all(uint8_t num_samples, AverageMeasurement* results, in
         i+1, (unsigned long long)results[i].id, results[i].samples_count, results[i].average_distance);
     }
 
-
-
-
-
-    free(response_buffer);
+    free(response_buffer); // libero puntatore a fine funzione
     return 0;
 
 }
