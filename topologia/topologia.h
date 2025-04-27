@@ -63,6 +63,42 @@ double calcolaErrore(double distMisurata, double distCalcolata);
 double erroreTopologia(double distanze[MAX_NODES][MAX_NODES], Point2D coordinate[], int numNodi);
 
 /**
+ * @brief Funzione che rileva e corregge misurazioni inconsistenti
+ * 
+ * @param distanze matrice 2d di distanze tra i nodi
+ * @param numNodi numero di nodi effettivo di cui vogliamo effettuare calcolo
+ */
+void correggiMisurazioni(double distanze[MAX_NODES][MAX_NODES], int numNodi);
+
+/**
+ * @brief Posiziona i nodi in modo iniziale considerando incertezza
+ * 
+ * @param distanze matrice 2d di distanze tra i nodi
+ * @param numNodi numero di nodi effettivo di cui vogliamo effettuare calcolo
+ * @param coordinate coordinate della topologia calcolata
+ */
+void posizionamentoIniziale(double distanze[MAX_NODES][MAX_NODES], int numNodi, Point2D coordinate[]);
+
+/**
+ * @brief Fa uso del simulated annealing per ottimizzare topologia
+ * 
+ * @param distanze matrice 2d di distanze tra i nodi
+ * @param numNodi numero di nodi effettivo di cui vogliamo effettuare calcolo
+ * @param coordinate coordinate della topologia calcolata
+ * 
+ */
+void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Point2D coordinate[]);
+
+/**
+ * @brief Filtra i valori mediani delle coordinate calcolate
+ * 
+ * @param coordinate vettore di coordinate della topologia
+ * @param numNodi numero di nodi effettivi
+ * @param numCampioni numero di campioni 
+ */
+void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni);
+
+/**
  * @brief Costruisce la topologia dei nodi dello spazio
  * date le distanze tra tutti i nodi verso tutti i nodi.
  * 
