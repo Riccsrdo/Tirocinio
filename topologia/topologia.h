@@ -5,17 +5,19 @@
 #include <time.h>
 
 #define MAX_NODES 16 /* Configurabile se configurato anche su Firmware*/
-#define UWB_ERRORE 0.15 // circa 15cm
-#define NUM_ITERATIONS 2000 // iterazioni per convergere dati rumorosi
+#define UWB_ERRORE 0.40 // circa 40cm
+#define NUM_ITERATIONS 5000 // iterazioni per convergere dati rumorosi
 #define LEARNING_RATE 0.01 // tasso apprendimento ottimizzazione (valore di moltiplicazione per riduzione temperatura)
-#define TEMP_INIZIALE 1.0 // temperatura per simulated annealing
-#define TEMP_FINALE 0.001 // temperatura finale di accettazione
-#define NUM_CAMPIONI 5 // numero di posizioni casuali da provare nel multistart approach
-
+#define TEMP_INIZIALE 2.0 // temperatura per simulated annealing
+#define TEMP_FINALE 0.0005 // temperatura finale di accettazione
+#define NUM_CAMPIONI 10 // numero di posizioni casuali da provare nel multistart approach
+#define NUM_MEDIANA 9 // campioni mediana
+#define CONVERGENCE_THRESHOLD 1e-5 // soglia di convergenza
 
 typedef struct {
     double x;
     double y;
+    double confidenza; // confidenza della posizione
 } Point2D;
 
 /**

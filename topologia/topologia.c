@@ -11,9 +11,12 @@ double random_double(double min, double max){
 double calcolaErrore(double distMisurata, double distCalcolata){
     // Controllo se la differenza è nel range di errore UWB
     double diff = fabs(distCalcolata - distMisurata);
-    if(diff < UWB_ERRORE){
+    if(diff <= UWB_ERRORE * 0,5){ // transazione graduale
         return 0.0;
-    } else {
+    } else if( diff <= UWB_ERRORE){
+        double ratio = (diff - UWB_ERRORE * 0.5)/ (UWB_ERRORE * 0.5);
+        return pow(ratio * (diff - UWB_ERRORE * 0.5), 2);
+    }else {
         return pow(diff - UWB_ERRORE, 2);
     }
 }
@@ -50,6 +53,11 @@ void correggiMisurazioni(double distanze[MAX_NODES][MAX_NODES], int numNodi){
 }
 
 void posizionamentoIniziale(double distanze[MAX_NODES][MAX_NODES], int numNodi, Point2D coordinate[]){
+    // Imposto i livelli di confidenza iniziali
+    for (int i = 0; i<numNodi; i++){
+        coordinate[i].confidenza = 1.0;
+    }
+    
     // Posiziono il primo nodo all'origine (0,0)
     coordinate[0].x = 0.0;
     coordinate[0].y = 0.0;
@@ -60,7 +68,11 @@ void posizionamentoIniziale(double distanze[MAX_NODES][MAX_NODES], int numNodi, 
 
     // Per ogni nodo successivo
     for(int i = 2; i < numNodi; i++){
-        // Effettuo la triangolazione a partire dai primi due nodi
+        // Effettuo la triangolazione con molteplici riferimenti
+        //double bestX = 0.0, bestY = 0.0;
+        double minError = DBL_MAX;
+
+        // Prima effettuo la triangolazione a partire dai primi due nodi
         double d1 = distanze[0][i]; // distanza dal nodo 0
         double d2 = distanze[1][i]; // distanza dal nodo 1
         double d3 = coordinate[1].x; // Distanza tra nodo 0 e 1
@@ -95,9 +107,14 @@ void posizionamentoIniziale(double distanze[MAX_NODES][MAX_NODES], int numNodi, 
         // scelgo distanza con minor errore
         if(err1<=err2){
             coordinate[i]=pos1;
+            minError = err1;
         } else {
             coordinate[i]=pos2;
+            minError = err2;
         }
+
+        // Calcolo livello di confidenza basato su errore
+        coordinate[i].confidenza = 1.0 / (1.0 + minError);
 
         
     }
@@ -109,6 +126,7 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
     double temperatura = TEMP_INIZIALE;
     double fattore_raffreddamento = pow(TEMP_FINALE/TEMP_INIZIALE, 1.0/NUM_ITERATIONS);
     double erroreAttuale = erroreTopologia(distanze, coordinate, numNodi);
+    int iterSenzaMiglioramento = 0;
 
     Point2D migliori_coordinate[MAX_NODES]; // vettore temporaneo in cui salvo coordinate più precise
     double bestErrore = erroreAttuale;
@@ -126,14 +144,28 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
             temp_coord[j]=coordinate[j];
         }
 
-        // seleziono un nodo tra quelli nella rete, esclusi
+        // seleziono nodi tra quelli nella rete, esclusi
         // i primi due che sono fissati
-        int nodoRandom = 2 + rand() % (numNodi-2);
+        // strategia adattiva: perturba più nodi quando ottimizzazione rallenta
+        int numNodi = 1;
+        if (iterSenzaMiglioramento > 200 ) numNodi = 2;
+        if (iterSenzaMiglioramento > 500 ) numNodi = 3;
+        
 
-        // Perturbo posizione in modo randomico sulla base
-        // della temperatura attuale
-        temp_coord[nodoRandom].x += random_double(-temperatura, temperatura);
-        temp_coord[nodoRandom].y+= random_double(-temperatura, temperatura);
+        for (int p = 0; p < numNodi; p++){
+            int nodoRandom = 2 + rand() % (numNodi-2);
+
+            // Calcolo di quanto perturbare sulla base della temperatura
+            // e della confidenza attuale del nodo randomicamente scelto
+            double perturbazione = temperatura / coordinate[nodoRandom].confidenza;
+
+            // Perturbo posizione in modo randomico sulla base
+            // della temperatura attuale
+            temp_coord[nodoRandom].x += random_double(-perturbazione, perturbazione);
+            temp_coord[nodoRandom].y+= random_double(-perturbazione, perturbazione);
+        }
+
+        
 
         // Calcolo il nuovo errore
         double new_error = erroreTopologia(distanze, coordinate, numNodi);
@@ -145,8 +177,19 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
 
         if(delta < 0 || random_double(0,1) < probabilità){
             // Allora accetto il valore
-            coordinate[nodoRandom] = temp_coord[nodoRandom];
+            for (int k = 2; k<numNodi;k++){
+                coordinate[k] = temp_coord[k];
+            }
             erroreAttuale = new_error;
+
+            // Se il delta calcolato è troppo basso
+            // allora aggiorno il numero di iterazioni che non hanno
+            // comportato dei miglioramenti
+            if (delta < -CONVERGENCE_THRESHOLD){
+                iterSenzaMiglioramento = 0;
+            } else {
+                iterSenzaMiglioramento++;
+            }
 
             // aggiorno migliore configurazione
             if(new_error < bestErrore){
@@ -155,9 +198,19 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
                 }
 
                 bestErrore = new_error;
+            } else {
+                iterSenzaMiglioramento++;
             }
+        } else {
+            iterSenzaMiglioramento++;
         }
         temperatura *= fattore_raffreddamento; // riduco temperatura
+
+        if(iterSenzaMiglioramento>1000){
+            // incremento temperatura per fornire margine maggiore di accettazione nuovi valori perturbati
+            temperatura = temperatura*1.5;
+            iterSenzaMiglioramento=0;
+        }
     }
 
     // ottenuta configurazione migliorata, la salvo
@@ -176,7 +229,7 @@ void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
     }
 
     // Genero diversi posizionamenti con piccole perturbazioni
-    for(int i=0;i<numCampioni;i++){
+    for(int i=0;i<NUM_MEDIANA;i++){
         // Il primo posizionamento è quello originale
         if(i==0){
             for (int j = 0; j < numNodi; j++) {
@@ -188,9 +241,11 @@ void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
                 if (j < 2) {  // Mantieni fissi i primi due nodi
                     campioni[j][i] = coordinate[j];
                 } else {
-                    // Aggiungi un piccolo rumore gaussiano
-                    campioni[j][i].x = coordinate[j].x + random_double(-UWB_ERRORE/2, UWB_ERRORE/2);
-                    campioni[j][i].y = coordinate[j].y + random_double(-UWB_ERRORE/2, UWB_ERRORE/2);
+                    // Aggiungi un piccolo rumore gaussiano in modo inversamente proporzionale alla confidenza
+                    double noise = UWB_ERRORE * (1.0 - coordinate[j].confidenza);
+                    campioni[j][i].x = coordinate[j].x + random_double(-noise, noise);
+                    campioni[j][i].y = coordinate[j].y + random_double(-noise, noise);
+                    campioni[i][j].confidenza = coordinate[j].confidenza; // aggiorno la confidenza
                 }
             }
         }
@@ -198,19 +253,25 @@ void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
 
      // Calcola la mediana delle coordinate per ogni nodo
      for (int i = 2; i < numNodi; i++) {  // Solo per i nodi dopo i primi due
-        double *xValues = (double*)malloc(numCampioni * sizeof(double));
-        double *yValues = (double*)malloc(numCampioni * sizeof(double));
+        double *xValues = (double*)malloc(NUM_MEDIANA * sizeof(double));
+        double *yValues = (double*)malloc(NUM_MEDIANA * sizeof(double));
+        double *weights = (double*)malloc(NUM_MEDIANA * sizeof(double));
 
-        if (xValues == NULL || yValues == NULL) {
+        if (xValues == NULL || yValues == NULL || weights == NULL) {
             printf("Errore: impossibile allocare memoria per il filtro di mediana\n");
             exit(1);
         }
         
+        // Copio valori e assegno pesi sulla base di confidenza e posizione originale
         for (int j = 0; j < numCampioni; j++) {
             xValues[j] = campioni[i][j].x;
             yValues[j] = campioni[i][j].y;
+
+            weights[j] = campioni[i][j].confidenza;
+            if (j==0) weights[j] * 2.0; // raddoppio peso per posizione originale
         }
         
+        #if 0
         // Ordinamento semplice per trovare la mediana
         for (int j = 0; j < numCampioni-1; j++) {
             for (int k = j+1; k < numCampioni; k++) {
@@ -226,6 +287,35 @@ void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
                 }
             }
         }
+            #endif
+        // Ordinamento per coordinate x
+        for (int j = 0; j < NUM_MEDIANA-1; j++) {
+            for (int k = j+1; k < NUM_MEDIANA; k++) {
+                if (xValues[j] > xValues[k]) {
+                    // Scambio x
+                    double temp = xValues[j];
+                    xValues[j] = xValues[k];
+                    xValues[k] = temp;
+                    
+                    // Scambio peso corrispondente
+                    temp = weights[j];
+                    weights[j] = weights[k];
+                    weights[k] = temp;
+                }
+            }
+        }
+        
+        // Ordinamento per coordinate y
+        for (int j = 0; j < NUM_MEDIANA-1; j++) {
+            for (int k = j+1; k < NUM_MEDIANA; k++) {
+                if (yValues[j] > yValues[k]) {
+                    // Scambio y
+                    double temp = yValues[j];
+                    yValues[j] = yValues[k];
+                    yValues[k] = temp;
+                }
+            }
+        }
         
         // Aggiorna le coordinate con la mediana
         coordinate[i].x = xValues[numCampioni/2];
@@ -233,6 +323,7 @@ void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
 
         free(xValues);
         free(yValues);
+        free(weights);
     }
 
 
@@ -280,10 +371,12 @@ void costruisci_topologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Po
     // Generatore numeri casuali per generare configurazioni random
     srand(time(NULL));
 
+    // TODO: funzione che rileva outlier di misurazione
+
     for(int tentativi = 0; tentativi < NUM_CAMPIONI; tentativi++){
 
         // Effettuo una correzione delle misurazioni
-        correggiMisurazioni(distanze, numNodi); // Verifica le misurazioni effettuate
+        //correggiMisurazioni(distanze, numNodi); // Verifica le misurazioni effettuate
         // con UWB, e in caso di incosistenze grandi prova a correggere
 
         // posiziona in modo temporaneo i nodi
