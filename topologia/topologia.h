@@ -4,13 +4,17 @@
 #include <float.h>
 #include <time.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #define MAX_NODES 16 /* Configurabile se configurato anche su Firmware*/
 #define UWB_ERRORE 0.40 // circa 40cm
-#define NUM_ITERATIONS 5000 // iterazioni per convergere dati rumorosi
+#define NUM_ITERATIONS 8000 // iterazioni per convergere dati rumorosi
 #define LEARNING_RATE 0.01 // tasso apprendimento ottimizzazione (valore di moltiplicazione per riduzione temperatura)
 #define TEMP_INIZIALE 2.0 // temperatura per simulated annealing
 #define TEMP_FINALE 0.0005 // temperatura finale di accettazione
-#define NUM_CAMPIONI 10 // numero di posizioni casuali da provare nel multistart approach
+#define NUM_CAMPIONI 20 // numero di posizioni casuali da provare nel multistart approach
 #define NUM_MEDIANA 9 // campioni mediana
 #define CONVERGENCE_THRESHOLD 1e-5 // soglia di convergenza
 
@@ -40,6 +44,15 @@ double calc_dist(Point2D p1, Point2D p2);
  * @return valore random generato
  */
 double random_double(double min, double max);
+
+/**
+ * @brief Funzione che si occupa di rilevare e correggere outlier
+ * che si discostano di molto dalle misurazioni
+ * 
+ * @param distanze vettore di distanze da tutti i nodi verso tutti i nodi
+ * @param numNodi numero di nodi effettivamente impiegati
+ */
+void rilevamentoOutlier(double distanze[MAX_NODES][MAX_NODES], int numNodi);
 
 /**
  * @brief Funzione che si occupa di calcolare errore sulla base 
@@ -145,3 +158,4 @@ void print_topologia(Point2D coordinate[], int numNodi);
  */
 void verificaConsistenza(double distanze[MAX_NODES][MAX_NODES], Point2D coordinate[], int numNodi);
 
+void visualizzaTopologiaAvanzata(Point2D coordinate[], int numNodi);

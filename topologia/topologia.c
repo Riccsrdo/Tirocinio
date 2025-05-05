@@ -11,13 +11,138 @@ double random_double(double min, double max){
 double calcolaErrore(double distMisurata, double distCalcolata){
     // Controllo se la differenza è nel range di errore UWB
     double diff = fabs(distCalcolata - distMisurata);
-    if(diff <= UWB_ERRORE * 0,5){ // transazione graduale
+    if(diff <= UWB_ERRORE * 0.5){ // transazione graduale
         return 0.0;
     } else if( diff <= UWB_ERRORE){
         double ratio = (diff - UWB_ERRORE * 0.5)/ (UWB_ERRORE * 0.5);
         return pow(ratio * (diff - UWB_ERRORE * 0.5), 2);
     }else {
         return pow(diff - UWB_ERRORE, 2);
+    }
+}
+
+
+void rilevamentoOutlier(double distanze[MAX_NODES][MAX_NODES], int numNodi) {
+    int i, j, k;
+    const int MIN_SUPPORT = 3;  // Numero minimo di triangoli per validare
+    
+    // Verifica della disuguaglianza triangolare su più percorsi
+    for (i = 0; i < numNodi; i++) {
+        for (j = i + 1; j < numNodi; j++) {
+            int violazioniTriangolo = 0;
+            int triangoliValidi = 0;
+            
+            for (k = 0; k < numNodi; k++) {
+                if (k != i && k != j) {
+                    triangoliValidi++;
+                    // Verifica se dik + dkj < dij - 2*errore (violazione grave)
+                    if (distanze[i][k] + distanze[k][j] < distanze[i][j] - 2*UWB_ERRORE) {
+                        violazioniTriangolo++;
+                    }
+                }
+            }
+            
+            // Se più della metà dei triangoli mostrano violazioni, la misura è un outlier
+            if (violazioniTriangolo >= MIN_SUPPORT && 
+                violazioniTriangolo > triangoliValidi * 0.3) {
+                
+                // Calcolo la distanza mediana attraverso i punti intermedi
+                double* distanzeIndirette = (double*)malloc(triangoliValidi * sizeof(double));
+                int idx = 0;
+                
+                for (k = 0; k < numNodi; k++) {
+                    if (k != i && k != j) {
+                        distanzeIndirette[idx++] = distanze[i][k] + distanze[k][j];
+                    }
+                }
+                
+                // Ordino le distanze indirette
+                for (int p = 0; p < idx-1; p++) {
+                    for (int q = p+1; q < idx; q++) {
+                        if (distanzeIndirette[p] > distanzeIndirette[q]) {
+                            double temp = distanzeIndirette[p];
+                            distanzeIndirette[p] = distanzeIndirette[q];
+                            distanzeIndirette[q] = temp;
+                        }
+                    }
+                }
+                
+                // Uso la mediana delle distanze indirette
+                double distanzaCorretta = distanzeIndirette[idx/2];
+                printf("Outlier rilevato: Distanza tra nodo %d e %d corretta da %.2f a %.2f metri\n", 
+                       i, j, distanze[i][j], distanzaCorretta);
+                       
+                distanze[i][j] = distanzaCorretta;
+                distanze[j][i] = distanzaCorretta;
+                
+                free(distanzeIndirette);
+            }
+        }
+    }
+    
+    // Verifica della coerenza complessiva attraverso MDS
+    double centroidi[MAX_NODES][2] = {0};  // Coordinate stimate grezze
+    
+    // Posiziono arbitrariamente il primo nodo nell'origine
+    centroidi[0][0] = 0;
+    centroidi[0][1] = 0;
+    
+    // Posiziono grossolanamente gli altri nodi basandosi sulle distanze dal primo
+    for (i = 1; i < numNodi; i++) {
+        double angle = random_double(0, 2 * M_PI); // angoli casuali
+        centroidi[i][0] = distanze[0][i] * cos(angle);
+        centroidi[i][1] = distanze[0][i] * sin(angle);
+    }
+    
+    // Semplice ottimizzazione delle posizioni 
+    for (int iter = 0; iter < 25; iter++) {
+        for (i = 1; i < numNodi; i++) {  
+            double forceX = 0, forceY = 0;
+            for (j = 0; j < numNodi; j++) {
+                if (i == j) continue;
+                
+                double dx = centroidi[i][0] - centroidi[j][0];
+                double dy = centroidi[i][1] - centroidi[j][1];
+                double distAttuale = sqrt(dx*dx + dy*dy);
+                
+                if (distAttuale > 1e-6) {  // Controllo che non sia 0
+                    double scale = (distAttuale - distanze[i][j]) / distAttuale;
+                    forceX -= scale * dx * 0.1;  // Fattore di smorzamento
+                    forceY -= scale * dy * 0.1;
+                }
+            }
+            centroidi[i][0] += forceX;
+            centroidi[i][1] += forceY;
+        }
+    }
+    
+    // Identifica distanze che sono incoerenti con il layout grossolano
+    for (i = 0; i < numNodi; i++) {
+        for (j = i + 1; j < numNodi; j++) {
+            double dx = centroidi[i][0] - centroidi[j][0];
+            double dy = centroidi[i][1] - centroidi[j][1];
+            double distStimata = sqrt(dx*dx + dy*dy);
+            
+            // Se la differenza è troppo grande, potrebbe essere un outlier
+            if (fabs(distStimata - distanze[i][j]) > 4 * UWB_ERRORE) {
+                
+                double nuovaDistanza = 0.7 * distanze[i][j] + 0.3 * distStimata;
+
+                if (fabs(nuovaDistanza - distanze[i][j]) > UWB_ERRORE) {
+                    // Limita la correzione al margine di errore UWB
+                    if (nuovaDistanza > distanze[i][j]) {
+                        nuovaDistanza = distanze[i][j] + UWB_ERRORE;
+                    } else {
+                        nuovaDistanza = distanze[i][j] - UWB_ERRORE;
+                    }
+                }
+
+                printf("Incoerenza topologica: Distanza tra nodo %d e %d aggiustata da %.2f a %.2f metri\n", 
+                       i, j, distanze[i][j], nuovaDistanza);
+                distanze[i][j] = nuovaDistanza;
+                distanze[j][i] = nuovaDistanza;
+            }
+        }
     }
 }
 
@@ -113,10 +238,27 @@ void posizionamentoIniziale(double distanze[MAX_NODES][MAX_NODES], int numNodi, 
             minError = err2;
         }
 
+        printf("Posiziono il nodo %d alle coordinate (%f, %f)\n", i, coordinate[i].x, coordinate[i].y);
+
         // Calcolo livello di confidenza basato su errore
         coordinate[i].confidenza = 1.0 / (1.0 + minError);
 
         
+    }
+
+    // Correzione posizionamento
+    for (int i = 2; i < numNodi; i++) {
+        for (int j = 0; j < i; j++) {
+            double dist = calc_dist(coordinate[i], coordinate[j]);
+            if (dist < 0.1) {  // Se due nodi sono troppo vicini
+                printf("ATTENZIONE: Nodi %d e %d quasi sovrapposti. Correggo...\n", i, j);
+                // Sposta il nodo in una posizione più ragionevole
+                double angle = random_double(0, 2 * M_PI);
+                double dist_corr = distanze[i][j] * 0.9;  // 90% della distanza misurata
+                coordinate[i].x = coordinate[j].x + dist_corr * cos(angle);
+                coordinate[i].y = coordinate[j].y + dist_corr * sin(angle);
+            }
+        }
     }
     
 }
@@ -147,12 +289,12 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
         // seleziono nodi tra quelli nella rete, esclusi
         // i primi due che sono fissati
         // strategia adattiva: perturba più nodi quando ottimizzazione rallenta
-        int numNodi = 1;
-        if (iterSenzaMiglioramento > 200 ) numNodi = 2;
-        if (iterSenzaMiglioramento > 500 ) numNodi = 3;
+        int numNodiPert = 1;
+        if (iterSenzaMiglioramento > 200 ) numNodiPert = 2;
+        if (iterSenzaMiglioramento > 500 ) numNodiPert = 3;
         
 
-        for (int p = 0; p < numNodi; p++){
+        for (int p = 0; p < numNodiPert; p++){
             int nodoRandom = 2 + rand() % (numNodi-2);
 
             // Calcolo di quanto perturbare sulla base della temperatura
@@ -168,7 +310,7 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
         
 
         // Calcolo il nuovo errore
-        double new_error = erroreTopologia(distanze, coordinate, numNodi);
+        double new_error = erroreTopologia(distanze, temp_coord, numNodi);
 
         // decido se accettare la nuova configurazione
         double delta = new_error - erroreAttuale;
@@ -201,6 +343,10 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
             } else {
                 iterSenzaMiglioramento++;
             }
+
+            if(new_error < bestErrore && i % 500 == 0) {
+                printf("Iterazione %d: Errore migliorato a %.6f\n", i, new_error);
+            }
         } else {
             iterSenzaMiglioramento++;
         }
@@ -217,6 +363,8 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
     for(int i=0; i<numNodi;i++){
         coordinate[i] = migliori_coordinate[i];
     }
+
+    
 }
 
 void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
@@ -229,7 +377,7 @@ void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
     }
 
     // Genero diversi posizionamenti con piccole perturbazioni
-    for(int i=0;i<NUM_MEDIANA;i++){
+    for(int i=0;i<numCampioni;i++){
         // Il primo posizionamento è quello originale
         if(i==0){
             for (int j = 0; j < numNodi; j++) {
@@ -245,7 +393,7 @@ void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
                     double noise = UWB_ERRORE * (1.0 - coordinate[j].confidenza);
                     campioni[j][i].x = coordinate[j].x + random_double(-noise, noise);
                     campioni[j][i].y = coordinate[j].y + random_double(-noise, noise);
-                    campioni[i][j].confidenza = coordinate[j].confidenza; // aggiorno la confidenza
+                    campioni[j][i].confidenza = coordinate[j].confidenza; // aggiorno la confidenza
                 }
             }
         }
@@ -253,9 +401,9 @@ void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
 
      // Calcola la mediana delle coordinate per ogni nodo
      for (int i = 2; i < numNodi; i++) {  // Solo per i nodi dopo i primi due
-        double *xValues = (double*)malloc(NUM_MEDIANA * sizeof(double));
-        double *yValues = (double*)malloc(NUM_MEDIANA * sizeof(double));
-        double *weights = (double*)malloc(NUM_MEDIANA * sizeof(double));
+        double *xValues = (double*)malloc(numCampioni * sizeof(double));
+        double *yValues = (double*)malloc(numCampioni * sizeof(double));
+        double *weights = (double*)malloc(numCampioni * sizeof(double));
 
         if (xValues == NULL || yValues == NULL || weights == NULL) {
             printf("Errore: impossibile allocare memoria per il filtro di mediana\n");
@@ -268,7 +416,7 @@ void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
             yValues[j] = campioni[i][j].y;
 
             weights[j] = campioni[i][j].confidenza;
-            if (j==0) weights[j] * 2.0; // raddoppio peso per posizione originale
+            if (j==0) weights[j] *= 2.0; // raddoppio peso per posizione originale
         }
         
         #if 0
@@ -289,7 +437,7 @@ void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
         }
             #endif
         // Ordinamento per coordinate x
-        for (int j = 0; j < NUM_MEDIANA-1; j++) {
+        for (int j = 0; j < numCampioni-1; j++) {
             for (int k = j+1; k < NUM_MEDIANA; k++) {
                 if (xValues[j] > xValues[k]) {
                     // Scambio x
@@ -306,8 +454,8 @@ void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
         }
         
         // Ordinamento per coordinate y
-        for (int j = 0; j < NUM_MEDIANA-1; j++) {
-            for (int k = j+1; k < NUM_MEDIANA; k++) {
+        for (int j = 0; j < numCampioni-1; j++) {
+            for (int k = j+1; k < numCampioni; k++) {
                 if (yValues[j] > yValues[k]) {
                     // Scambio y
                     double temp = yValues[j];
@@ -342,7 +490,7 @@ void verificaConsistenza(double distanze[MAX_NODES][MAX_NODES], Point2D coordina
 
     for(i = 0; i < numNodi; i++){
         for(j = i + 1; j < numNodi; j++){
-            double distCalcolata = distanza(coordinate[i], coordinate[j]);
+            double distCalcolata = calc_dist(coordinate[i], coordinate[j]);
             double errore = calcolaErrore(distanze[i][j], distCalcolata);
 
             if(errore>erroreMax){
@@ -371,7 +519,7 @@ void costruisci_topologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Po
     // Generatore numeri casuali per generare configurazioni random
     srand(time(NULL));
 
-    // TODO: funzione che rileva outlier di misurazione
+    rilevamentoOutlier(distanze, numNodi);
 
     for(int tentativi = 0; tentativi < NUM_CAMPIONI; tentativi++){
 
@@ -399,6 +547,50 @@ void costruisci_topologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Po
     }
 
     // applico filtro mediana
-    filtroMediana(coordinate, numNodi, 5);
+    filtroMediana(coordinate, numNodi, NUM_MEDIANA);
+
+    // Verifica finale per evitare sovrapposizioni
+    for (int i = 0; i < numNodi; i++) {
+        for (int j = 0; j < i; j++) {
+            double dist = calc_dist(coordinate[i], coordinate[j]);
+            if (dist < 0.1 && i != j) {
+                printf("CORREZIONE FINALE: Nodi %d e %d sovrapposti - separazione\n", i, j);
+                double angle = random_double(0, 2 * M_PI);
+                double separazione = fmax(0.5, distanze[i][j] * 0.8);
+                coordinate[i].x = coordinate[j].x + separazione * cos(angle);
+                coordinate[i].y = coordinate[j].y + separazione * sin(angle);
+            }
+        }
+    }
+
+    // Stampa configurazione finale prima del filtro mediana
+    printf("\nConfigurazione finale prima del filtro mediana:\n");
+    for (int i = 0; i < numNodi; i++) {
+        printf("Nodo %d: (%.2f, %.2f)\n", i, coordinate[i].x, coordinate[i].y);
+    }
+}
+
+// Funzione per visualizzare la topologia con livelli di confidenza
+void visualizzaTopologiaAvanzata(Point2D coordinate[], int numNodi) {
+    int i;
+    printf("\nTopologia ricostruita (con livelli di confidenza):\n");
+    printf("-----------------------------------------------------\n");
+    printf("| Nodo |    X    |    Y    | Confidenza | Precisione |\n");
+    printf("-----------------------------------------------------\n");
+    
+    for (i = 0; i < numNodi; i++) {
+        // Calcola un indicatore di precisione stimata in centimetri
+        double precisioneStimata = UWB_ERRORE * (1.0 - coordinate[i].confidenza) * 100;
+        // Limita la precisione stimata a un valore ragionevole
+        if (precisioneStimata < 5.0) precisioneStimata = 5.0;
+        if (precisioneStimata > UWB_ERRORE * 100) precisioneStimata = UWB_ERRORE * 100;
+        
+        printf("| %4d | %7.2f | %7.2f | %10.2f | ±%6.1f cm |\n", 
+               i, coordinate[i].x, coordinate[i].y, coordinate[i].confidenza, precisioneStimata);
+    }
+    
+    printf("-----------------------------------------------------\n");
+    printf("Nota: La precisione stimata è basata sul livello di confidenza\n");
+    printf("      e rappresenta l'incertezza nella posizione del nodo.\n");
 }
 
