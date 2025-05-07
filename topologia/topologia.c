@@ -21,6 +21,78 @@ double calcolaErrore(double distMisurata, double distCalcolata){
     }
 }
 
+void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi){
+    // Creo dei placeholder per i nodi migliori per il modello di partenza
+    Point2D bestP1, bestP2, bestP3;
+    int indici_nodi[3] = {-1, -1, -1};
+    int bestInlierCount = 0; // Contatore per il numero di inlier
+
+    // Array in cui dico se un nodo è inlier
+    bool* inlier = (bool*)malloc(numNodi * sizeof(bool));
+
+
+    // Itero per x volte per permettere il ciclo di iterazioni RANSAC
+    for(int i = 0; i< 200;i++){
+        // Prendo tre nodi casualmente
+        int nodo1 = rand() % numNodi;
+        int nodo2 = rand() % numNodi;
+        int nodo3 = rand() % numNodi;
+        // Assicuro che i nodi siano diversi
+        while(nodo1 == nodo2 || nodo1 == nodo3 || nodo2 == nodo3){
+            nodo2 = rand() % numNodi;
+            nodo3 = rand() % numNodi;
+        }
+        // Ottengo le distanze tra i nodi
+        double d12 = distanze[nodo1][nodo2];
+        double d13 = distanze[nodo1][nodo3];
+        double d23 = distanze[nodo2][nodo3];
+        // Verifico se il triangolo è valido con la disuguaglianza triangolare
+        if(d12 + d13 < d23 - 2 * UWB_ERRORE|| d12 + d23 < d13 - 2 * UWB_ERRORE || d13 + d23 < d12 - 2 * UWB_ERRORE){
+            // Triangolo non valido, salto
+            continue;
+        }
+        // Se è valido, creo dei punti 2D temporanei ponendo 1 sull'origine, 2 su x
+        // 3 lo calcolo con legge del coseno
+        Point2D p1 = {0.0, 0.0, 1.0};
+        Point2D p2 = {d12, 0.0, 1.0};
+        double cos = (d12*d12 + d13*d13 - d23*d23) / (2*d12*d13);
+        if(cos < -1.0) cos = -1.0;
+        if(cos > 1.0) cos = 1.0;
+        double angle = acos(cos);
+        Point2D p3 = {d13*cos, d13*sin(angle), 1.0};
+
+        bool* inlierAttuali = (bool*)malloc(numNodi * sizeof(bool)); // Array temporaneo per gli inlier
+        int inlierCount = 0; // Contatore per gli inlier attuali
+        // I nodi 1,2,3 sono inlier per definizione
+        inlierAttuali[nodo1] = true;
+        inlierAttuali[nodo2] = true;
+        inlierAttuali[nodo3] = true;
+        inlierCount += 3; // Incremento il contatore degli inlier
+
+        
+
+        // Prendo tutti gli altri nodi e verifico se sono consistenti con il modello entro UWB_ERRORE
+        for(int j = 0; j<numNodi; j++){
+            if(j == nodo1 || j == nodo2 || j == nodo3){
+                continue; // salto i nodi già considerati
+            }
+            // Verifico se la distanza 1-j, 2-j e 3-j sono consistenti, ovvero se 1,2,3 permettono di stimare
+            // la posizione di j in modo coerente alle distanze misurate, se si allora le distanze sono inlier
+            double d1j = distanze[nodo1][j];
+            double d2j = distanze[nodo2][j];
+            double d3j = distanze[nodo3][j];
+            
+
+
+        }
+        
+
+    }
+
+    free(inlier); // Libero la memoria allocata per gli inlier
+    
+}
+
 
 void rilevamentoOutlier(double distanze[MAX_NODES][MAX_NODES], int numNodi) {
     int i, j, k;

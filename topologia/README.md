@@ -22,6 +22,8 @@ Si ha poi una stabilizzazione con filtro di mediana. Si prendono tutti i nodi, e
 
 Si verifica poi la consistenza, calcolando le distanze tra i nodi nella topologia costruita e confrontandole con quelle originariamente passate. Si verifica se ci sono discrepanze maggiori rispetto al margine di errore UWB, e si calcolano statistiche come errore massimo e medio.
 
+Ulteriore elemento è dato dal rilevamento degli outlier, ovvero misure che si distaccano di molto dallo standard che dovrebbero seguire. Per rilevare gli outlier faccio uso di un algoritmo noto come RANSAC (Random Sample Consensus), l'idea dietro consiste nel prendere il minimo set di dati costruendo un modello che in questo caso è dato un triangolo di punti e i dati sono le distanze misurate con UWB. Prendiamo ad esempio tre punti A,B,C di cui prendiamo le distanze A-B, B-C e C-A e costruiamo un triangolo ponendo A sull'origine, B sull'asse X con valore di x pari alla distanza A-B, e C facendo uso della trilaterazione. A questo punto, prendendo qualsiasi altro punto D nel dataset verifico se con il modello A,B,C sono in grado di stimare la posizione di D in modo coerente alle distanze misurate. Se si, allora le distanze sono in linea con il modello e quindi si tratta di un "inlier". Se il numero di "inlier" trovati è maggiore di quello attuale salvo il nuovo modello come modello migliore. Ripeto tutto il processo per N iterazioni, salvando il modello con più inlier.
+
 
 
 
