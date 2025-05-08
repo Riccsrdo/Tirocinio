@@ -14,6 +14,8 @@
 #define SPI_DEVICE "/dev/spidev0.0"
 #define SPI_SPEED 2000000 // 2 MHz
 #define SPI_MODE 2
+#define SPI_BITS 8
+
 
 /*
 Tutti i possibili comandi che possono essere inviati al dispositivo slave (dwm1001-dev)
@@ -70,7 +72,7 @@ typedef struct {
  * @param device Path del device SPI (es. "/dev/spidev0.0").
  * @param speed Velocità SPI in Hz (es. 2000000).
  * @param mode Modalità SPI (0, 1, 2, o 3).
- * @return 0 in caso di successo, -1 in caso di errore.
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
 int dwm_spi_init(const char* device, uint32_t speed, uint8_t mode);
 
@@ -85,7 +87,7 @@ void dwm_spi_close(void);
  * @param tx_buf Buffer con i dati da inviare.
  * @param rx_buf Buffer dove memorizzare i dati ricevuti.
  * @param len Numero di byte da trasferire.
- * @return 0 in caso di successo, -1 in caso di errore.
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
 int dwm_spi_transfer(uint8_t* tx_buf, uint8_t* rx_buf, size_t len);
 
@@ -93,7 +95,7 @@ int dwm_spi_transfer(uint8_t* tx_buf, uint8_t* rx_buf, size_t len);
  * @brief Invia un comando a singolo byte.
  *
  * @param command Il byte del comando da inviare.
- * @return 0 in caso di successo, -1 in caso di errore.
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
 int dwm_send_command(uint8_t command);
 
@@ -102,7 +104,7 @@ int dwm_send_command(uint8_t command);
  *
  * @param command Il byte del comando.
  * @param argument Il byte dell'argomento.
- * @return 0 in caso di successo, -1 in caso di errore.
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
 int dwm_send_command_with_arg(uint8_t command, uint8_t argument);
 
@@ -113,7 +115,7 @@ int dwm_send_command_with_arg(uint8_t command, uint8_t argument);
  * @brief Imposta id del dispositivo (64 bit) connesso via SPI.
  * 
  * @param new_id Id da impostare
- * @return 0 in caso di successo, -1 di fallimento
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
 int dwm_set_id(uint64_t new_id);
 
@@ -123,24 +125,24 @@ int dwm_set_id(uint64_t new_id);
  * sul dwm1001-dev.
  * 
  * @param anchor_id del dispositivo da abilitare
- * @return 0 in caso di successo, -1 di fallimento
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
-int dwm_enable_anchor(uint64_t anchor_id);
+int dwm_enable_device(uint64_t anchor_id);
 
 /**
  * @brief Disabilita un'ancora specifica, disabilitandola nell'array di dispositivi abilitati sul
  * dwm1001-dev.
  * 
  * @param anchor_id del dispositivo da disabilitare
- * @return 0 in caso di successo, -1 di fallimento
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
-int dwm_disable_anchor(uint64_t anchor_id);
+int dwm_disable_device(uint64_t anchor_id);
 
 /**
  * @brief Entra in modalità configurazione, permettendo di
  * impostare id dei dispositivi, e altre impostazioni
  * 
- * @return 0 in caso di successo, -1 di fallimento
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
 int dwm_enter_config_mode(void);
 
@@ -148,7 +150,7 @@ int dwm_enter_config_mode(void);
  * @brief Esco dalla modalità configurazione, tornando al normale
  * funzionamento
  * 
- * @return 0 in caso di successo, -1 di fallimento
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
 int dwm_exit_config_mode(void);
 
@@ -156,7 +158,7 @@ int dwm_exit_config_mode(void);
  * @brief Imposta numero dispositivi attualmente in funzione con cui effettuare la comunicazione
  * 
  * @param num_devices numero dispositivi
- * @return 0 in caso di successo, -1 di fallimento
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
 int dwm_set_num_devices(uint8_t num_devices);
 
@@ -167,9 +169,19 @@ int dwm_set_num_devices(uint8_t num_devices);
  * @param index dell'array dei dispositivi sul DWM
  * @param device_id a 64 bit del dispositivo che si vuole
  * impostare
- * @return 0 in caso di successo, -1 di fallimento
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
 int dwm_set_device_id_at(uint8_t index, uint64_t device_id);
+
+
+/**
+ * @brief Dato un vettore di id, imposta gli id dei dispositivi sul DWM
+ * 
+ * @param device_ids Array di id a 64 bit da impostare
+ * @param num_devices numero di dispositivi
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
+ */
+int dwm_set_devices_id(uint64_t* device_ids, uint8_t num_devices);
 
 /**
  * @brief Esegue misurazioni dato un certo dispositivo
@@ -181,9 +193,9 @@ int dwm_set_device_id_at(uint8_t index, uint64_t device_id);
  * effettuare, 10 è standard
  * @param result Puntatore a struttura AverageMeasurement
  * popolata
- * @return 0 in caso di successo, -1 di fallimento
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
-int dwm_measure_average(uint64_t target_id, uint8_t num_samples, AverageMeasurement* result);
+int dwm_measure(uint64_t target_id, uint8_t num_samples, AverageMeasurement* result);
 
 /**
  * @brief Esegue misurazioni verso tutti i dispositivi
@@ -193,9 +205,9 @@ int dwm_measure_average(uint64_t target_id, uint8_t num_samples, AverageMeasurem
  * @param results Array di AverageMeasurement popolato
  * @param max_results Dimensione massima dell'array resylts
  * @param out_valid_count numero di misurazioni valide ottenute
- * @return 0 in caso di successo, -1 di fallimento
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
-int dwm_measure_average_all(uint8_t num_samples, AverageMeasurement* results, int max_results, uint8_t* out_valid_count);
+int dwm_measure_all(uint8_t num_samples, AverageMeasurement* results, int max_results, uint8_t* out_valid_count);
 
 
 #endif // DWM_SPI_MASTER_RPI_H
