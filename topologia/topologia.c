@@ -21,14 +21,72 @@ double calcolaErrore(double distMisurata, double distCalcolata){
     }
 }
 
+int calcolaIntersezioneCerchi(Point2D p1, double r1, Point2D p2, double r2, Point2D* intersezione1, Point2D* intersezione2) {
+    // Calcola la distanza tra i centri dei cerchi
+    double d = calc_dist(p1, p2);
+    
+    // Se i cerchi non si intersecano
+    if (d > r1 + r2 || d < fabs(r1 - r2) || d == 0 && r1!=r2) {
+        return 0; // Nessuna intersezione
+    }
+
+    if(d<1e-9){
+        if(fabs(r1-r2)<1e-9){
+            // Se i cerchi coincidono, non c'è un punto di intersezione unico
+            return 0; // Nessuna intersezione
+        } else {
+            // Se i cerchi sono concentrici ma con raggi diversi, non c'è intersezione
+            return 0; // Nessuna intersezione
+        }
+    }
+
+    // Calcolo del punto di intersezione
+    double a = (r1*r1 - r2*r2 + d*d) / (2*d);
+    double h_sq = r1*r1 - a*a;
+
+    if(h_sq < 0 && fabs(h_sq) < 1e-9){
+        h_sq = 0; // Se h^2 è negativo, significa che i cerchi si toccano in un punto
+    } else if(h_sq < 0){
+        return 0; // Nessuna intersezione
+    }
+    double h = sqrt(h_sq);
+    
+    Point2D p0 = {p1.x + a * (p2.x - p1.x) / d, p1.y + a * (p2.y - p1.y) / d, 0.0};
+
+    intersezione1->x = p0.x + h * (p2.y - p1.y) / d;
+    intersezione1->y = p0.y - h * (p2.x - p1.x) / d;
+    intersezione1->confidenza = 0.0;
+    
+    if(fabs(h)>1e-9){
+        intersezione2->x = p0.x - h * (p2.y - p1.y) / d;
+        intersezione2->y = p0.y + h * (p2.x - p1.x) / d;
+        intersezione2->confidenza = 0.0;
+
+        return 2; // Due punti di intersezione
+    } 
+
+    if (intersezione2 != NULL) { // Buona pratica anche se qui è sempre fornito
+        intersezione2->x = intersezione1->x;
+        intersezione2->y = intersezione1->y;
+        intersezione2->confidenza = intersezione1->confidenza;
+    }
+    
+    return 1; // un punto di intersezione
+}
+
 void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi){
     // Creo dei placeholder per i nodi migliori per il modello di partenza
     Point2D bestP1, bestP2, bestP3;
     int indici_nodi[3] = {-1, -1, -1};
-    int bestInlierCount = 0; // Contatore per il numero di inlier
+    int bestInlierCount = -1; // Contatore per il numero di inlier
 
     // Array in cui dico se un nodo è inlier
-    bool* inlier = (bool*)malloc(numNodi * sizeof(bool));
+    bool* inlier = (bool*)calloc(numNodi, sizeof(bool));
+    if(!inlier){
+        perror("Errore allocazione memoria per inlier");
+        exit(EXIT_FAILURE);
+        return;
+    }
 
 
     // Itero per x volte per permettere il ciclo di iterazioni RANSAC
@@ -47,7 +105,7 @@ void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi){
         double d13 = distanze[nodo1][nodo3];
         double d23 = distanze[nodo2][nodo3];
         // Verifico se il triangolo è valido con la disuguaglianza triangolare
-        if(d12 + d13 < d23 - 2 * UWB_ERRORE|| d12 + d23 < d13 - 2 * UWB_ERRORE || d13 + d23 < d12 - 2 * UWB_ERRORE){
+        if(d12 + d13 < d23 -  UWB_ERRORE|| d12 + d23 < d13 -  UWB_ERRORE || d13 + d23 < d12 -  UWB_ERRORE){
             // Triangolo non valido, salto
             continue;
         }
@@ -61,7 +119,12 @@ void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi){
         double angle = acos(cos);
         Point2D p3 = {d13*cos, d13*sin(angle), 1.0};
 
-        bool* inlierAttuali = (bool*)malloc(numNodi * sizeof(bool)); // Array temporaneo per gli inlier
+        bool* inlierAttuali = (bool*)calloc(numNodi, sizeof(bool)); // Array temporaneo per gli inlier
+        if(!inlierAttuali){
+            perror("Errore allocazione memoria per inlier attuali");
+            exit(EXIT_FAILURE);
+            return;
+        }
         int inlierCount = 0; // Contatore per gli inlier attuali
         // I nodi 1,2,3 sono inlier per definizione
         inlierAttuali[nodo1] = true;
@@ -70,7 +133,6 @@ void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi){
         inlierCount += 3; // Incremento il contatore degli inlier
 
         
-
         // Prendo tutti gli altri nodi e verifico se sono consistenti con il modello entro UWB_ERRORE
         for(int j = 0; j<numNodi; j++){
             if(j == nodo1 || j == nodo2 || j == nodo3){
@@ -81,12 +143,136 @@ void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi){
             double d1j = distanze[nodo1][j];
             double d2j = distanze[nodo2][j];
             double d3j = distanze[nodo3][j];
-            
 
+            // A questo punto usando il punto 1 e 2 e le distanze 1-j e 2-j
+            // determino i punti di intersezione tra i due cerchi centrati in 1 e 2
+            // e raggio d1j e d2j rispettivamente
+            Point2D intersezione1, intersezione2;
+            int num_intersezioni = calcolaIntersezioneCerchi(p1, d1j, p2, d2j, &intersezione1, &intersezione2);
 
+            if(num_intersezioni > 0){
+                 // Controllo che il primo punto rientri nel range di errore di UWB per la distanza j
+                 bool consistente = false;
+                 if(fabs(calc_dist(p3, intersezione1) -d3j) < UWB_ERRORE){
+                    // Se la distanza tra il punto 3 e il primo punto di intersezione è nel range di errore
+                    // allora il nodo j è un inlier
+                    consistente = true;
+                 }
+                 if(!consistente && num_intersezioni == 2){
+                    // Se il primo punto non è consistente, verifico il secondo
+                    if(fabs(calc_dist(p3, intersezione2) -d3j) < UWB_ERRORE){
+                        consistente = true;
+                    }
+                 }
+
+                 if(consistente){
+                    // Se il nodo j è un inlier, lo segno come tale
+                    inlierAttuali[j] = true;
+                    inlierCount++;
+                 }
+            }
         }
-        
 
+        if(inlierCount > bestInlierCount){
+            // Se il numero di inlier attuali è maggiore del migliore trovato finora
+            // allora aggiorno i nodi migliori e il contatore degli inlier
+            bestInlierCount = inlierCount;
+            indici_nodi[0] = nodo1;
+            indici_nodi[1] = nodo2;
+            indici_nodi[2] = nodo3;
+            bestP1 = p1;
+            bestP2 = p2;
+            bestP3 = p3;
+
+            // aggiorno il vettore degli inlier migliori
+            for(int k = 0; k<numNodi; k++){
+                inlier[k] = inlierAttuali[k];
+            }
+        }
+
+        free(inlierAttuali); // Libero la memoria allocata per gli inlier attuali
+    }
+
+    // Fase di correzione delle distanze usando miglior modello
+    // Controllo se c'è un modello valido da cui partire
+    if(bestInlierCount > 2 &&  indici_nodi[0] != -1) {
+
+        Point2D* coordinate_stimate = (Point2D*)malloc(numNodi * sizeof(Point2D));
+        if(!coordinate_stimate){
+            perror("Errore allocazione memoria per coordinate stimate");
+            exit(EXIT_FAILURE);
+            return;
+        }
+        bool* flag_coordinate = (bool*)calloc(numNodi, sizeof(bool));
+        if(!flag_coordinate){
+            perror("Errore allocazione memoria per flag coordinate");
+            exit(EXIT_FAILURE);
+            return;
+        }
+
+        // Inizializzo le coordinate stimate e i flag
+        coordinate_stimate[indici_nodi[0]] = bestP1;
+        coordinate_stimate[indici_nodi[1]] = bestP2;
+        coordinate_stimate[indici_nodi[2]] = bestP3;
+        flag_coordinate[indici_nodi[0]] = true;
+        flag_coordinate[indici_nodi[1]] = true;
+        flag_coordinate[indici_nodi[2]] = true;
+
+        // Stimo coordinate degli altri nodi inlier
+        for(int k = 0; k < numNodi; ++k){
+            if(inlier[k] && !flag_coordinate[k]){
+                double dk_to_best0 = distanze[k][indici_nodi[0]];
+                double dk_to_best1 = distanze[k][indici_nodi[1]];
+                double dk_to_best2 = distanze[k][indici_nodi[2]];
+
+                // Ricalcolo i nodi usando calcolo intersezione cerchi
+                Point2D intersezione1, intersezione2;
+                int num_intersezioni = calcolaIntersezioneCerchi(bestP1, dk_to_best0, bestP2, dk_to_best1, &intersezione1, &intersezione2);
+                if(num_intersezioni > 0){
+                    if(num_intersezioni == 1){
+                        // Se c'è un solo punto di intersezione, lo uso
+                        coordinate_stimate[k] = intersezione1;
+                    } else {
+                        // Se ci sono due punti di intersezione, prendo quello più vicino al nodo 3
+                        if(fabs(calc_dist(bestP3, intersezione1) - dk_to_best2) < fabs(calc_dist(bestP3, intersezione2) - dk_to_best2)){
+                            coordinate_stimate[k] = intersezione1;
+                        } else {
+                            coordinate_stimate[k] = intersezione2;
+                        }
+                    }
+                    flag_coordinate[k] = true; // Segno che ho calcolato le coordinate
+                } else {
+                    inlier[k] = false; // Se non riesco a calcolare le coordinate, non è un inlier  
+                }
+            }
+        }
+
+        // Correggo le distanze tra tutti i nodi che sono stati posizionati 
+        // in modo da essere consistenti con il modello migliore
+        for(int k = 0; k < numNodi; ++k){
+            if(!inlier[k] || !flag_coordinate[k]){
+                continue; // Se non è un inlier o non ho calcolato le coordinate, salto
+            }
+            // Calcolo la distanza tra il nodo k e gli altri
+            for(int c = k + 1; c < numNodi; ++c){
+                if(!inlier[c] || !flag_coordinate[c]){
+                    continue; // Se non è un inlier o non ho calcolato le coordinate, salto
+                }
+                // Calcolo la distanza tra i nodi k e c
+                double dkc = calc_dist(coordinate_stimate[k], coordinate_stimate[c]);
+                // Correggo la distanza nella matrice delle distanze
+                if(fabs(distanze[k][c] - dkc) > UWB_ERRORE * 0.5){
+                    distanze[k][c] = dkc;
+                    distanze[c][k] = dkc;
+                }
+                
+            }
+        }
+        free(coordinate_stimate); // Libero la memoria allocata per le coordinate stimate
+        free(flag_coordinate); // Libero la memoria allocata per i flag delle coordinate
+
+    } else {
+        printf("Nessun modello valido trovato.\n");
     }
 
     free(inlier); // Libero la memoria allocata per gli inlier

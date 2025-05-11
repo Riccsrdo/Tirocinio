@@ -47,6 +47,28 @@ double calc_dist(Point2D p1, Point2D p2);
 double random_double(double min, double max);
 
 /**
+ * @brief Funzione che si occupa di calcolare l'intersezione
+ * tra due cerchi dati i loro centri e raggi
+ * 
+ * @param p1 centro del primo cerchio
+ * @param r1 raggio del primo cerchio
+ * @param p2 centro del secondo cerchio
+ * @param r2 raggio del secondo cerchio
+ * @param intersezione1 primo punto di intersezione
+ * @param intersezione2 secondo punto di intersezione
+ */
+int calcolaIntersezioneCerchi(Point2D p1, double r1, Point2D p2, double r2, Point2D* intersezione1, Point2D* intersezione2);
+
+/**
+ * @brief Funzione che si occupa di rilevare outlier
+ * attraverso il metodo RANSAC, e correggerli
+ * 
+ * @param distanze matrice 2d di distanze tra i nodi
+ * @param numNodi numero di nodi effettivo di cui vogliamo effettuare calcolo
+ */
+void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi);
+
+/**
  * @brief Funzione che si occupa di rilevare e correggere outlier
  * che si discostano di molto dalle misurazioni
  * 
