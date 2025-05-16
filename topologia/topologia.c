@@ -74,14 +74,14 @@ int calcolaIntersezioneCerchi(Point2D p1, double r1, Point2D p2, double r2, Poin
     return 1; // un punto di intersezione
 }
 
-void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi){
+void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi, bool inlier[MAX_NODES]){
     // Creo dei placeholder per i nodi migliori per il modello di partenza
     Point2D bestP1, bestP2, bestP3;
     int indici_nodi[3] = {-1, -1, -1};
     int bestInlierCount = -1; // Contatore per il numero di inlier
 
     // Array in cui dico se un nodo è inlier
-    bool* inlier = (bool*)calloc(numNodi, sizeof(bool));
+    //bool* inlier = (bool*)calloc(numNodi, sizeof(bool));
     if(!inlier){
         perror("Errore allocazione memoria per inlier");
         exit(EXIT_FAILURE);
@@ -279,6 +279,370 @@ void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi){
     
 }
 
+void jacobi_eigenvalue(int N, double **A, double **V, double *autovalori, int max_iter, double tol) {
+    // Inizializzo V come matrice identità
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++) {
+            if (i == j) {
+                V[i][j] = 1.0;
+            } else {
+                V[i][j] = 0.0;
+            }
+        }
+    }
+
+    for(int iter = 0; iter < max_iter; iter++) {
+        double max_off_diag = 0.0;
+        int p = -1, q = -1;
+
+        // Trovo elemento fuori diagonale massimo
+        for (int i = 0; i < N; i++) {
+            for (int j = i + 1; j < N; j++) {
+                if (fabs(A[i][j]) > max_off_diag) {
+                    max_off_diag = fabs(A[i][j]);
+                    p = i;
+                    q = j;
+                }
+            }
+        }
+
+        // Se il massimo è sotto la tolleranza, esco
+        if (max_off_diag < tol) {
+            break;
+        }
+
+        // Calcolo gli autovalori e autovettori
+        double app = A[p][p];
+        double aqq = A[q][q];
+        double apq = A[p][q];
+
+        double tau = (aqq - app) / (2 * apq);
+        double t;
+
+
+        if(fabs(apq)<DBL_EPSILON){
+            t = 0.0;
+        } else if(fabs(tau)<DBL_EPSILON) {
+            t = (tau >= 0) ? 1.0 : -1.0; // no div per zero
+            if(tau==0) t = (app<=apq) ? 1.0 : -1.0;
+        } else if (fabs(tau) > 1.0/DBL_EPSILON){
+            t = 1.0 / (2.0 * tau);
+        } else {
+            t = ((tau>=0)? 1.0 : -1.0) / (fabs(tau) + sqrt(1.0 + tau*tau));
+        }
+
+        double c = 1.0 / sqrt(1 + t*t);
+        double s = t * c;
+
+        // Aggiorno la matrice A
+        A[p][p] = app - t * apq;
+        A[q][q] = aqq + t * apq;
+        A[p][q] = 0.0;
+        A[q][p] = 0.0;
+
+        for (int i = 0; i < N; i++) {
+            if (i != p && i != q) {
+                double aip = A[i][p];
+                double aiq = A[i][q];
+                A[i][p] = c * aip - s * aiq;
+                A[i][q] = s * aip + c * aiq;
+                A[p][i] = A[i][p]; // simmetria
+                A[q][i] = A[i][q]; // simmetria
+            }
+        }
+
+        // Aggiorno la matrice V
+        for (int i = 0; i < N; i++) {
+            double vip = V[i][p];
+            double viq = V[i][q];
+            V[i][p] = c * vip - s * viq;
+            V[i][q] = s * vip + c * viq;
+        }
+
+        // Estrazione degli autovalori
+        for (int i = 0; i < N; i++) {
+            autovalori[i] = A[i][i];
+        }
+
+    }
+    
+
+}
+
+void MDS_classico(double distanze[MAX_NODES][MAX_NODES], bool flag_inlier[MAX_NODES], 
+    int numNodi, Point2D coordinate[]){
+
+    // L'algoritmo si basa sul calcolo dei nodi inlier fatto in precedenza con RANSAC
+    // Dato quindi il vettore di inlier, determino quanti sono
+    int numInlier = 0;
+    for(int i = 0; i<numNodi; i++){
+        if(flag_inlier[i]){
+            numInlier++;
+        } 
+    }
+
+    // Controllo che gli inlier siano almeno 3
+    if(numInlier < 3){
+        printf("Non ci sono abbastanza inlier per eseguire MDS.\n");
+        return;
+    }
+
+    // Creo un vettore in cui salvo gli indici degli inlier
+    int* indici_inlier = (int*)malloc(numInlier * sizeof(int));
+    if(!indici_inlier){
+        perror("Errore allocazione memoria per indici inlier");
+        exit(EXIT_FAILURE);
+        return;
+    }
+
+    // Popolo il vettore degli indici inlier
+    int index = 0;
+    for(int i = 0; i<numNodi; i++){
+        if(flag_inlier[i]){
+            indici_inlier[index++] = i;
+        }
+    }
+
+    // Creo la matrice di distanza quadratica
+    double** D_sq = (double**)malloc(numInlier * sizeof(double*));
+    if(!D_sq){
+        perror("Errore allocazione memoria per matrice D_sq");
+        //libero la memoria allocata per altro
+        free(indici_inlier);
+        exit(EXIT_FAILURE);
+        return;
+    }
+    for(int i = 0; i<numInlier; i++){
+        D_sq[i] = (double*)malloc(numInlier * sizeof(double));
+        if(!D_sq[i]){
+            perror("Errore allocazione memoria per matrice D_sq");
+            //libero la memoria allocata per altro
+            for(int j = 0; j<i; j++){
+                free(D_sq[j]);
+            }
+            free(D_sq);
+            free(indici_inlier);
+            exit(EXIT_FAILURE);
+            return;
+        }
+        for(int j = 0; j<numInlier; j++){ // Determino le entry della matrice
+            if(i == j){
+                D_sq[i][j] = 0.0;
+            } else {
+                D_sq[i][j] = pow(distanze[indici_inlier[i]][indici_inlier[j]], 2);
+            }
+        }
+    }
+
+    // Applico la doppia centratura
+    double* row_means = (double*)calloc(numInlier, sizeof(double));
+    double* col_means = (double*)calloc(numInlier, sizeof(double));
+    double grand_mean = 0.0;
+
+    if(!row_means || !col_means){
+        perror("Errore allocazione memoria per row_means o col_means");
+        //libero la memoria allocata per altro
+        for(int i = 0; i<numInlier; i++){
+            free(D_sq[i]);
+        }
+        free(D_sq);
+        free(indici_inlier);
+        if(row_means) free(row_means);
+        if(col_means) free(col_means);
+        exit(EXIT_FAILURE);
+        return;
+    }
+
+    // Popolo i vettori delle medie
+    for(int i = 0; i<numInlier; i++){
+        for(int j = 0; j<numInlier; j++){
+            row_means[i] += D_sq[i][j];
+            col_means[j] += D_sq[i][j];
+        }
+    }
+
+    // Determino la media globale
+    for(int i = 0; i<numInlier; i++){
+        grand_mean += row_means[i];
+        row_means[i] /= numInlier; // Media della riga
+        col_means[i] /= numInlier; // Media della colonna
+    }
+    grand_mean /= (numInlier * numInlier); // Media globale
+
+    // Applico la doppia centratura
+    double** B = (double**)malloc(numInlier * sizeof(double*));
+    if(!B){
+        perror("Errore allocazione memoria per matrice B");
+        //libero la memoria allocata per altro
+        for(int i = 0; i<numInlier; i++){
+            free(D_sq[i]);
+        }
+        free(D_sq);
+        free(indici_inlier);
+        free(row_means);
+        free(col_means);
+        exit(EXIT_FAILURE);
+        return;
+    }
+
+    for(int i = 0; i<numInlier; i++){
+        B[i] = (double*)malloc(numInlier * sizeof(double));
+        if(!B[i]){
+            perror("Errore allocazione memoria per matrice B");
+            //libero la memoria allocata per altro
+            for(int j = 0; j<i; j++){
+                free(B[j]);
+            }
+            free(B);
+            for(int j = 0; j<numInlier; j++){
+                free(D_sq[j]);
+            }
+            free(D_sq);
+            free(indici_inlier);
+            free(row_means);
+            free(col_means);
+            exit(EXIT_FAILURE);
+            return;
+        }
+        for(int j = 0; j<numInlier; j++){
+            B[i][j] = -0.5 * (D_sq[i][j] - row_means[i] - col_means[j] + grand_mean);
+        }
+    }
+
+    // Libero memoria
+    for(int i = 0; i<numInlier; i++){
+        free(D_sq[i]);
+    }
+    free(D_sq);
+    free(row_means);
+    free(col_means);
+
+    // Calcolo gli autovalori e autovettori della matrice B
+    double* autovalori = (double*)malloc(numInlier * sizeof(double));
+    double** autovettori = (double**)malloc(numInlier * sizeof(double*));
+    if(!autovalori || !autovettori){
+        perror("Errore allocazione memoria per autovalori o autovettori");
+        //libero la memoria allocata per altro
+        for(int i = 0; i<numInlier; i++){
+            free(B[i]);
+        }
+        free(B);
+        free(indici_inlier);
+        if(autovalori) free(autovalori);
+        if(autovettori){
+            for(int i = 0; i<numInlier; i++){
+                free(autovettori[i]);
+            }
+            free(autovettori);
+        }
+        exit(EXIT_FAILURE);
+        return;
+    }
+
+    for(int i = 0; i<numInlier; i++){
+        autovettori[i] = (double*)malloc(numInlier * sizeof(double));
+        if(!autovettori[i]){
+            perror("Errore allocazione memoria per autovettori");
+            //libero la memoria allocata per altro
+            for(int j = 0; j<i; j++){
+                free(autovettori[j]);
+            }
+            free(autovettori);
+            for(int j = 0; j<numInlier; j++){
+                free(B[j]);
+            }
+            free(B);
+            free(indici_inlier);
+            free(autovalori);
+            exit(EXIT_FAILURE);
+            return;
+        }
+    }
+
+    // Uso la funzione di estrazione degli autovalori e autovettori su B
+    jacobi_eigenvalue(numInlier, B, autovalori, autovettori, 100, 1e-9);
+
+    // Seleziono i due autovettori e autovalori più grandi, ordinando il vettore
+    typedef struct {
+        double value;
+        int index;
+    } EigenPair;
+
+    EigenPair* eigenPairs = (EigenPair*)malloc(numInlier * sizeof(EigenPair));
+    if(!eigenPairs){
+        perror("Errore allocazione memoria per eigenPairs");
+        //libero la memoria allocata per altro
+        for(int i = 0; i<numInlier; i++){
+            free(B[i]);
+        }
+        free(B);
+        free(indici_inlier);
+        free(autovalori);
+        for(int i = 0; i<numInlier; i++){
+            free(autovettori[i]);
+        }
+        free(autovettori);
+        exit(EXIT_FAILURE);
+        return;
+    }
+
+    for(int i = 0; i<numInlier; i++){
+        eigenPairs[i].value = autovalori[i];
+        eigenPairs[i].index = i;
+    }
+
+    // Ordino gli autovalori in ordine decrescente
+    for(int i = 0; i < numInlier -1; i++){
+        for(int j=0; j< numInlier -i -1; j++){
+            if(eigenPairs[j].value < eigenPairs[j+1].value){
+                EigenPair temp = eigenPairs[j];
+                eigenPairs[j] = eigenPairs[j+1];
+                eigenPairs[j+1] = temp;
+            }
+        }
+    }
+
+    // Calcolo le coordinate
+    // Uso solo i primi due autovalori e autovettori
+    // X = V_k * sqrt(lambda_k)
+    // con V_k matrice degli autovettori e lambda_k matrice diagonale degli autovalori
+
+    for(int i=0; i< numInlier; i++){
+        int global_index = indici_inlier[i]; // mi trovo l'indice dell'inlier nella mappa globale
+        coordinate[global_index].x = 0.0; 
+        coordinate[global_index].y = 0.0; // Salvo il valore temporaneo
+
+        for(int d=0; d<2 && d < numInlier; d++){ // 2 sta per le due dimensioni
+            double lambda = eigenPairs[d].value;
+            if(lambda < 0){
+                lambda = 0; // Se l'autovalore è negativo, lo metto a 0
+            }
+
+            int eigenIndex = eigenPairs[d].index; // Indice dell'autovettore
+            double component = autovettori[i][eigenIndex] *sqrt(lambda); // 
+            
+            coordinate[global_index].x = component; 
+            coordinate[global_index].y = component;
+
+        }
+        
+    }
+
+    // Pulisco memoria
+    for(int i=0; i < numInlier; i++){
+        free(B[i]);
+        free(autovettori[i]);
+    }
+    free(B);
+    free(autovalori);
+    free(autovettori);
+    free(eigenPairs);
+    free(indici_inlier);
+
+    return numInlier;
+
+}
+
 
 void rilevamentoOutlier(double distanze[MAX_NODES][MAX_NODES], int numNodi) {
     int i, j, k;
@@ -404,14 +768,27 @@ void rilevamentoOutlier(double distanze[MAX_NODES][MAX_NODES], int numNodi) {
     }
 }
 
-double erroreTopologia(double distanze[MAX_NODES][MAX_NODES], Point2D coordinate[], int numNodi){
+double erroreTopologia(double distanze[MAX_NODES][MAX_NODES], Point2D coordinate[], int numNodi, bool inlier_mask[MAX_NODES][MAX_NODES]){
     double errore = 0.0;
+    int inlierCount = 0;
     
     for(int i = 0; i < numNodi; i++){
         for(int j = i + 1; j < numNodi; j++){
-            double distCalcolata = calc_dist(coordinate[i], coordinate[j]);
-            errore += calcolaErrore(distanze[i][j], distCalcolata);
+            // Considero inlier se distanza è inlier
+            if(inlier_mask[i][j]){
+                double distCalcolata = calc_dist(coordinate[i], coordinate[j]);
+                errore += calcolaErrore(distanze[i][j], distCalcolata);
+                inlierCount++;double distCalcolata = calc_dist(coordinate[i], coordinate[j]);
+            }
+          
         }
+    }
+
+    // Normalizzo l'errore per il numero di inlier
+    if(inlierCount > 0){
+        errore /= inlierCount;
+    } else {
+        errore = DBL_MAX; // Se non ci sono inlier, l'errore è infinito
     }
 
     return errore;
@@ -521,11 +898,34 @@ void posizionamentoIniziale(double distanze[MAX_NODES][MAX_NODES], int numNodi, 
     
 }
 
-void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Point2D coordinate[]){
+double random_gaussian(double mu, double sigma){
+    static int usa_valore_precedente = 0;
+    static double valore_precedente;
+    double x1, x2, raggio_quadro, fattore;
+
+    if(usa_valore_precedente){
+        usa_valore_precedente = 0;
+        return mu + sigma * valore_precedente;
+    }
+    do {
+        x1 = 2.0 * ((double)rand() / RAND_MAX) - 1.0;
+        x2 = 2.0 * ((double)rand() / RAND_MAX) - 1.0;
+        raggio_quadro = x1 * x1 + x2 * x2;
+    } while (raggio_quadro >= 1.0 || raggio_quadro == 0.0);
+
+    fattore = sqrt(-2.0 * log(raggio_quadro) / raggio_quadro);
+    valore_precedente = x2 * fattore;
+    usa_valore_precedente = 1;
+    return mu + sigma * x1 * fattore;
+}
+
+void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Point2D coordinate[], bool inlier_mask[MAX_NODES][MAX_NODES]){
     // Imposto la temperatura iniziale per essere sempre accettante
     double temperatura = TEMP_INIZIALE;
-    double fattore_raffreddamento = pow(TEMP_FINALE/TEMP_INIZIALE, 1.0/NUM_ITERATIONS);
-    double erroreAttuale = erroreTopologia(distanze, coordinate, numNodi);
+    //double fattore_raffreddamento = pow(TEMP_FINALE/TEMP_INIZIALE, 1.0/NUM_ITERATIONS);
+    double fattore_raffreddamento = 0.99; // Fattore di raffreddamento
+    
+    double erroreAttuale = erroreTopologia(distanze, coordinate, numNodi, inlier_mask); // TODO: da modificare per usare inlie_mask
     int iterSenzaMiglioramento = 0;
 
     Point2D migliori_coordinate[MAX_NODES]; // vettore temporaneo in cui salvo coordinate più precise
@@ -549,26 +949,50 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
         // strategia adattiva: perturba più nodi quando ottimizzazione rallenta
         int numNodiPert = 1;
         if (iterSenzaMiglioramento > 200 ) numNodiPert = 2;
-        if (iterSenzaMiglioramento > 500 ) numNodiPert = 3;
+        if (iterSenzaMiglioramento > 500 ) numNodiPert = min(3, numNodi-2);
+        if (numNodi-2 <= 0 && numNodi > 0){
+            numNodiPert = 1;
+        }
         
 
         for (int p = 0; p < numNodiPert; p++){
             int nodoRandom = 2 + rand() % (numNodi-2);
 
-            // Calcolo di quanto perturbare sulla base della temperatura
-            // e della confidenza attuale del nodo randomicamente scelto
-            double perturbazione = temperatura / coordinate[nodoRandom].confidenza;
+            // Calcolo un valore non lineare per capire quanto perturbare in base alla temperatura
+            double fattore_perturbazione = sqrt(temperatura/TEMP_INIZIALE);
 
-            // Perturbo posizione in modo randomico sulla base
-            // della temperatura attuale
-            temp_coord[nodoRandom].x += random_double(-perturbazione, perturbazione);
-            temp_coord[nodoRandom].y+= random_double(-perturbazione, perturbazione);
+            double perturbazione_standard = UWB_ERRORE * 1.5;
+
+            // Prendo confidenza del nodo (controllando che non sia zero)
+            double confidenza = coordinate[nodoRandom].confidenza;
+            if (confidenza < 0.01) confidenza = 0.01;
+
+            // Calcolo la perturbazione gaussiana
+            double ampiezza_perturbazione = (perturbazione_standard * fattore_perturbazione) / confidenza;
+
+            // Storico dei miglioramenti
+            double fattore_escalation = 1.0;
+            // Applico nel caso di molteplici tentativi
+            if (iterSenzaMiglioramento > 700) {
+                fattore_escalation = 1.5;
+            } else if (iterSenzaMiglioramento > 300) {
+                fattore_escalation = 1.2;
+            }
+
+            ampiezza_perturbazione *= fattore_escalation; // aggiorno ampiezza perturbazione in base a n. tentativi senza miglioramenti
+
+            // Definisco un sigma per la perturbazione gaussiana così che
+            // il 99% delle perturbazioni siano comprese nell'errore massimo
+            double sigma = ampiezza_perturbazione / 3.0;
+
+            temp_coord[nodoRandom].x += random_gaussian(0.0, sigma);
+            temp_coord[nodoRandom].y += random_gaussian(0.0, sigma);
         }
 
         
 
         // Calcolo il nuovo errore
-        double new_error = erroreTopologia(distanze, temp_coord, numNodi);
+        double new_error = erroreTopologia(distanze, temp_coord, numNodi, inlier_mask); // TODO: da modificare per usare inlier_mask
 
         // decido se accettare la nuova configurazione
         double delta = new_error - erroreAttuale;
@@ -582,6 +1006,19 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
             }
             erroreAttuale = new_error;
 
+            if( erroreAttuale < bestErrore - CONVERGENCE_THRESHOLD){
+                bestErrore = erroreAttuale; // aggiorno errore migliore
+                for(int j = 0; j<numNodi; j++){
+                    migliori_coordinate[j] = coordinate[j];
+                }
+                iterSenzaMiglioramento = 0; // resetto contatore
+
+            } else {
+                iterSenzaMiglioramento++;
+            }
+
+
+            #if 0
             // Se il delta calcolato è troppo basso
             // allora aggiorno il numero di iterazioni che non hanno
             // comportato dei miglioramenti
@@ -605,16 +1042,26 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
             if(new_error < bestErrore && i % 500 == 0) {
                 printf("Iterazione %d: Errore migliorato a %.6f\n", i, new_error);
             }
+                #endif
         } else {
             iterSenzaMiglioramento++;
         }
-        temperatura *= fattore_raffreddamento; // riduco temperatura
+
+
+
+        //temperatura *= fattore_raffreddamento; // riduco temperatura
 
         if(iterSenzaMiglioramento>1000){
-            // incremento temperatura per fornire margine maggiore di accettazione nuovi valori perturbati
-            temperatura = temperatura*1.5;
-            iterSenzaMiglioramento=0;
+            // Aumento la temperatura ad una frazione della temperatura iniziale
+            // o un valore basato su differenza tra errore attuale e migliore
+
+            double fattore_riscaldamento = 0.1;
+            temperatura = max (temperatura * 1.2, TEMP_INIZIALE * fattore_riscaldamento);
+
+            iterSenzaMiglioramento = 0; // resetto contatore
         }
+
+        temperatura *= fattore_raffreddamento; // riduco temperatura
     }
 
     // ottenuta configurazione migliorata, la salvo
@@ -764,7 +1211,7 @@ void verificaConsistenza(double distanze[MAX_NODES][MAX_NODES], Point2D coordina
     }
 
     printf("Errore massimo: %.2f cm tra nodi %d e %d\n", erroreMax * 100, nodo1, nodo2);
-    printf("Errore medio: %.2f cm\n", erroreTopologia(distanze, coordinate, numNodi));
+    //printf("Errore medio: %.2f cm\n", erroreTopologia(distanze, coordinate, numNodi));
 
 }
 
@@ -777,6 +1224,12 @@ void costruisci_topologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Po
     // Generatore numeri casuali per generare configurazioni random
     srand(time(NULL));
 
+    // Verifico con RANSAC gli outlier definendo una maschera
+    bool inlier[MAX_NODES];
+    bool inlier_mask[MAX_NODES][MAX_NODES];
+    ransac_outlier(distanze, numNodi, inlier);
+
+    #if 0
     rilevamentoOutlier(distanze, numNodi);
 
     for(int tentativi = 0; tentativi < NUM_CAMPIONI; tentativi++){
@@ -826,6 +1279,7 @@ void costruisci_topologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Po
     for (int i = 0; i < numNodi; i++) {
         printf("Nodo %d: (%.2f, %.2f)\n", i, coordinate[i].x, coordinate[i].y);
     }
+    #endif
 }
 
 // Funzione per visualizzare la topologia con livelli di confidenza

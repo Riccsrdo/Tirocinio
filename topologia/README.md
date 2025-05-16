@@ -24,6 +24,29 @@ Si verifica poi la consistenza, calcolando le distanze tra i nodi nella topologi
 
 Ulteriore elemento è dato dal rilevamento degli outlier, ovvero misure che si distaccano di molto dallo standard che dovrebbero seguire. Per rilevare gli outlier faccio uso di un algoritmo noto come RANSAC (Random Sample Consensus), l'idea dietro consiste nel prendere il minimo set di dati costruendo un modello che in questo caso è dato un triangolo di punti e i dati sono le distanze misurate con UWB. Prendiamo ad esempio tre punti A,B,C di cui prendiamo le distanze A-B, B-C e C-A e costruiamo un triangolo ponendo A sull'origine, B sull'asse X con valore di x pari alla distanza A-B, e C facendo uso della trilaterazione. A questo punto, prendendo qualsiasi altro punto D nel dataset verifico se con il modello A,B,C sono in grado di stimare la posizione di D in modo coerente alle distanze misurate. Se si, allora le distanze sono in linea con il modello e quindi si tratta di un "inlier". Se il numero di "inlier" trovati è maggiore di quello attuale salvo il nuovo modello come modello migliore. Ripeto tutto il processo per N iterazioni, salvando il modello con più inlier.
 
+Modifica all'algoritmo di posizionamento iniziale di un nodo è data dall'implementazione dell'algoritmo di MDS (Multi Dimensional Scaling) classico. E' una tecnica che permette di determinare la similarità o la dissimilarità tra una serie di punti nello spazio 2D. Data quindi la matrice di N nodi l'MDS tenta di determinare la configurazione di questi nodi nello spazio in modo tale che sia il più vicina possibile alle distanze originali misurate. Quello che fa è prendere la matrice delle distanze D e calcolare D^2.
+La matrice D è definita nel seguente modo:
+E' una matrice NxN dove l'elemento d_{ij} corrisponde alla distanza euclidea tra il punto i e il punto j. Si ha che:
+- d_{ii}=0 per ogni i (la distanza da ogni nodo a se stesso è 0)
+- d__{ij}=d_{ji} per simmetria della matrice
+- d_{ij}>=0
+- vale la disuaglianza triangolare per cui dati i,j,k nodi si avrà che d_{ij}<= d_{ik} + d_{jk}.
+L'MDS opera con dati "centrati", ovvero che hanno origine nel baricentro dato dalla media di tutti i punti, facendo uso di una formula per determinare la matrice di centratura, data da J=I-1/N * 11^T. Gli elementi di questa formula sono:
+- I, la matrice identità, ovvero la matrice NxN che ha tutti 1 sulla diagonale e per il resto ha zeri
+- N è il numero di distanze della matrice
+- 11^T è la matrice quadrata dove ogni elemento è 1
+Con l'uso di questi elementi si ottiene la matrice J, che vanta delle seguenti proprietà:
+- J è simmetrica, quindi J = J^T, dove ^T indica la trasposta della matrice, ovvero la matrice le cui righe diventano colonne e viceversa
+- J = J^2, per cui è idempotente
+- J1 = 0, ovvero il prodotto tra il vettore di 1 e la matrice J annulla le costanti
+Presa quindi X la matrice Nxp (dove p=2, due dimensionalità) le cui righe sono coordinate dei punti x1,...,x_n si ha che X_{c}=JX, ovvero X_{c} è la matrice delle coordinate centrate, questo implica che ogni colonna di X_{c} ha media zero.
+Si vuole ora passare dalla matrice D ad una matrice B che contenga informazioni sui prodotti scalari tra i vettori posizione (centrati) dei punti. 
+Prendiamo x_i ed x_j due vettori che rappresentano le coordinate dei punti i,j rispettivamente nel piano bi-dimensionale, assumendo che siano centrati. Si ha che il quadrato della distanza (d_{ij})^2=||x_i-x_j||^2 = (x_i-x_j)^T(x_i-x_j). Si ha quindi che è uguale al prodotto della differenza tra il vettore "standard" e la trasposta. Sviluppando si ottiene che (d_{ij})^2 = x_i^Tx_i - x_i^Tx_j - x_j^Tx_i + x_j^Tx_j = ||x_i||^2 - 2(x_i^Tx_j) + ||x_j||^2.
+Sia X la matrice di dimensioni Nxp le cui righe sono le coordinate dei punti x_i^T (centrati). La matrice dei prodotti scalari (matrice di Gram) B=XX^T. L'elemento b_{ij}=x_i^Tx_j.
+L'MDS classico si basa sul mostrare che si può ottenere B a partire dalla matrice delle distanze al quadrato D^2 applicando la doppia centratura, ovvero:
+B = -1/2 JD^2J.
+
+
 
 
 

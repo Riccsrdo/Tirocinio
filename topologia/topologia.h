@@ -65,8 +65,13 @@ int calcolaIntersezioneCerchi(Point2D p1, double r1, Point2D p2, double r2, Poin
  * 
  * @param distanze matrice 2d di distanze tra i nodi
  * @param numNodi numero di nodi effettivo di cui vogliamo effettuare calcolo
+ * @param inlier vettore di booleani in cui viene indicato se un nodo è inlier
+ * 
  */
-void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi);
+void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi, bool inlier[MAX_NODES]);
+
+
+
 
 /**
  * @brief Funzione che si occupa di rilevare e correggere outlier
@@ -95,10 +100,11 @@ double calcolaErrore(double distMisurata, double distCalcolata);
  * @param distanze matrice 2d di distanze tra i nodi
  * @param coordinate coordinate della topologia calcolata
  * @param numNodi numero di nodi effettivo di cui vogliamo effettuare calcolo
+ * @param inlier_mask maschera di inlier
  * 
  * @return errore calcolato
  */
-double erroreTopologia(double distanze[MAX_NODES][MAX_NODES], Point2D coordinate[], int numNodi);
+double erroreTopologia(double distanze[MAX_NODES][MAX_NODES], Point2D coordinate[], int numNodi, bool inlier_mask[MAX_NODES][MAX_NODES]);
 
 /**
  * @brief Funzione che rileva e corregge misurazioni inconsistenti
@@ -118,14 +124,24 @@ void correggiMisurazioni(double distanze[MAX_NODES][MAX_NODES], int numNodi);
 void posizionamentoIniziale(double distanze[MAX_NODES][MAX_NODES], int numNodi, Point2D coordinate[]);
 
 /**
+ * @brief Genera un numero casuale seguendo una distribuzione gaussiana
+ * 
+ * @param mu media della distribuzione
+ * @param sigma deviazione standard della distribuzione
+ * 
+ * @return numero casuale generato
+ */
+double random_gaussian(double mu, double sigma);
+
+/**
  * @brief Fa uso del simulated annealing per ottimizzare topologia
  * 
  * @param distanze matrice 2d di distanze tra i nodi
  * @param numNodi numero di nodi effettivo di cui vogliamo effettuare calcolo
  * @param coordinate coordinate della topologia calcolata
- * 
+ * @param inlier_mask maschera di inlier
  */
-void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Point2D coordinate[]);
+void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Point2D coordinate[], bool inlier_mask[MAX_NODES][MAX_NODES]);
 
 /**
  * @brief Filtra i valori mediani delle coordinate calcolate
