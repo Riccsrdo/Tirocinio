@@ -275,7 +275,7 @@ void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi, bool inl
         printf("Nessun modello valido trovato.\n");
     }
 
-    free(inlier); // Libero la memoria allocata per gli inlier
+    //free(inlier); // Libero la memoria allocata per gli inlier
     
 }
 
@@ -560,7 +560,7 @@ void MDS_classico(double distanze[MAX_NODES][MAX_NODES], bool flag_inlier[MAX_NO
     }
 
     // Uso la funzione di estrazione degli autovalori e autovettori su B
-    jacobi_eigenvalue(numInlier, B, autovalori, autovettori, 100, 1e-9);
+    jacobi_eigenvalue(numInlier, B, autovettori, autovalori, 100, 1e-9);
 
     // Seleziono i due autovettori e autovalori più grandi, ordinando il vettore
     typedef struct {
@@ -628,10 +628,33 @@ void MDS_classico(double distanze[MAX_NODES][MAX_NODES], bool flag_inlier[MAX_NO
         
     }
 
+    // Calcolo le coordinate
+    // X = V_k * sqrt(lambda_k)
+    // con V_k matrice degli autovettori e lambda_k matrice diagonale degli autovalori
+    for(int i=0; i< numInlier; i++){
+        int global_index = indici_inlier[i];
+
+        // Inizializza coordinate
+        coordinate[global_index].x = 0.0;
+        coordinate[global_index].y = 0.0;
+
+        // Assegna coordinata X usando il primo autovalore/autovettore (il più grande)
+        if (0 < numInlier && eigenPairs[0].value > 0) { // Controlla che l'autovalore sia positivo
+             int eigenIndex0 = eigenPairs[0].index;
+             coordinate[global_index].x = autovettori[i][eigenIndex0] * sqrt(eigenPairs[0].value);
+        }
+
+        // Assegna coordinata Y usando il secondo autovalore/autovettore
+        if (1 < numInlier && eigenPairs[1].value > 0) { // Controlla che l'autovalore sia positivo
+             int eigenIndex1 = eigenPairs[1].index;
+             coordinate[global_index].y = autovettori[i][eigenIndex1] * sqrt(eigenPairs[1].value);
+        }
+    }
+
     // Pulisco memoria
     for(int i=0; i < numInlier; i++){
         free(B[i]);
-        free(autovettori[i]);
+        if(autovettori[i] != NULL) free(autovettori[i]);
     }
     free(B);
     free(autovalori);
@@ -639,7 +662,7 @@ void MDS_classico(double distanze[MAX_NODES][MAX_NODES], bool flag_inlier[MAX_NO
     free(eigenPairs);
     free(indici_inlier);
 
-    return numInlier;
+    //return numInlier;
 
 }
 
@@ -778,7 +801,8 @@ double erroreTopologia(double distanze[MAX_NODES][MAX_NODES], Point2D coordinate
             if(inlier_mask[i][j]){
                 double distCalcolata = calc_dist(coordinate[i], coordinate[j]);
                 errore += calcolaErrore(distanze[i][j], distCalcolata);
-                inlierCount++;double distCalcolata = calc_dist(coordinate[i], coordinate[j]);
+                inlierCount++;
+                //double distCalcolata = calc_dist(coordinate[i], coordinate[j]);
             }
           
         }
@@ -812,6 +836,7 @@ void correggiMisurazioni(double distanze[MAX_NODES][MAX_NODES], int numNodi){
     }
 }
 
+#if 0
 void posizionamentoIniziale(double distanze[MAX_NODES][MAX_NODES], int numNodi, Point2D coordinate[]){
     // Imposto i livelli di confidenza iniziali
     for (int i = 0; i<numNodi; i++){
@@ -898,6 +923,8 @@ void posizionamentoIniziale(double distanze[MAX_NODES][MAX_NODES], int numNodi, 
     
 }
 
+#endif
+
 double random_gaussian(double mu, double sigma){
     static int usa_valore_precedente = 0;
     static double valore_precedente;
@@ -949,7 +976,7 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
         // strategia adattiva: perturba più nodi quando ottimizzazione rallenta
         int numNodiPert = 1;
         if (iterSenzaMiglioramento > 200 ) numNodiPert = 2;
-        if (iterSenzaMiglioramento > 500 ) numNodiPert = min(3, numNodi-2);
+        if (iterSenzaMiglioramento > 500 ) numNodiPert = fmin(3, numNodi-2);
         if (numNodi-2 <= 0 && numNodi > 0){
             numNodiPert = 1;
         }
@@ -1056,7 +1083,7 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
             // o un valore basato su differenza tra errore attuale e migliore
 
             double fattore_riscaldamento = 0.1;
-            temperatura = max (temperatura * 1.2, TEMP_INIZIALE * fattore_riscaldamento);
+            temperatura = fmax(temperatura * 1.2, TEMP_INIZIALE * fattore_riscaldamento);
 
             iterSenzaMiglioramento = 0; // resetto contatore
         }
@@ -1069,114 +1096,145 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
         coordinate[i] = migliori_coordinate[i];
     }
 
-    
+}
+
+
+Point2D calcolaMedianaGeometrica(Point2D campioni[], int numCampioni, int maxIter, double tolleranza){
+    Point2D mediana = {0.0, 0.0, 0.0};
+
+    // controllo quanti siano i campioni
+    if(numCampioni <= 0){
+        printf("Errore: numero di campioni non valido\n");
+        return mediana;
+    }
+    if(numCampioni == 1){
+        return campioni[0]; // La mediana di un singolo punto è il campione stesso
+    }
+
+    // In primo luogo determino il baricentro dei campioni
+    for(int i=0; i<numCampioni; i++){
+        mediana.x += campioni[i].x;
+        mediana.y += campioni[i].y;
+    }
+    mediana.x /= numCampioni;
+    mediana.y /= numCampioni;
+
+    // Itero per calcolare la mediana geometrica
+    for(int iter=0; iter<maxIter; iter++){
+        double sommaX = 0.0;
+        double sommaY = 0.0;
+        double sommaConfidenza = 0.0;
+        Point2D vecchia_mediana = mediana;
+
+        bool coincide_con_campione = false;
+        for(int i = 0; i < numCampioni; i++){
+            double distanza = calc_dist(mediana, campioni[i]);
+
+            // Se la distanza è zero, significa che la mediana coincide con un campione
+            if(distanza < 1e-9){
+                distanza = fmax(1e-9, distanza); 
+                if(distanza == 0.0){
+                    coincide_con_campione = true;
+                }
+            }
+
+            // Calcolo il peso inversamente proporzionale alla distanza
+            double peso = 1.0 / (distanza);
+
+            sommaX += campioni[i].x * peso;
+            sommaY += campioni[i].y * peso;
+            sommaConfidenza += peso;
+        }
+
+        if(sommaConfidenza < 1e-9){
+            // La mediana precedente è l'unica valida
+            break;
+        }
+
+        mediana.x = sommaX / sommaConfidenza;
+        mediana.y = sommaY / sommaConfidenza;
+
+
+        // Controllo che la distanza tra mediana e quella precedente sia minore della tolleranza
+        double distanza = calc_dist(mediana, vecchia_mediana);
+        if(distanza < tolleranza){
+            if(coincide_con_campione && iter < 2){
+                // Se coincide subito, potrebbe trattarsi di un falso positivo, si continua
+            }
+            else {
+                break; // Converge
+            }
+        }  
+    }
+
+    return mediana;
 }
 
 void filtroMediana(Point2D coordinate[], int numNodi, int numCampioni){
     
     Point2D** campioni = (Point2D**)malloc(numNodi * sizeof(Point2D*));
+    if (campioni == NULL) {
+        printf("Errore: impossibile allocare memoria per i campioni\n");
+        exit(1);
+    }
 
     // alloco memoria per ogni campione
     for(int i=0;i<numNodi;i++){
         campioni[i] = (Point2D*)malloc(numCampioni*sizeof(Point2D));
-    }
-
-    // Genero diversi posizionamenti con piccole perturbazioni
-    for(int i=0;i<numCampioni;i++){
-        // Il primo posizionamento è quello originale
-        if(i==0){
-            for (int j = 0; j < numNodi; j++) {
-                campioni[j][i] = coordinate[j];
+        if (campioni[i] == NULL) {
+            printf("Errore: impossibile allocare memoria per i campioni\n");
+            // libero la memoria già allocata
+            for(int j=0;j<i;j++){
+                free(campioni[j]);
             }
-        } else{
-            // Gli altri sono perturbazioni dell'originale
-            for (int j = 0; j < numNodi; j++) {
-                if (j < 2) {  // Mantieni fissi i primi due nodi
-                    campioni[j][i] = coordinate[j];
-                } else {
-                    // Aggiungi un piccolo rumore gaussiano in modo inversamente proporzionale alla confidenza
-                    double noise = UWB_ERRORE * (1.0 - coordinate[j].confidenza);
-                    campioni[j][i].x = coordinate[j].x + random_double(-noise, noise);
-                    campioni[j][i].y = coordinate[j].y + random_double(-noise, noise);
-                    campioni[j][i].confidenza = coordinate[j].confidenza; // aggiorno la confidenza
-                }
-            }
-        }
-    }
-
-     // Calcola la mediana delle coordinate per ogni nodo
-     for (int i = 2; i < numNodi; i++) {  // Solo per i nodi dopo i primi due
-        double *xValues = (double*)malloc(numCampioni * sizeof(double));
-        double *yValues = (double*)malloc(numCampioni * sizeof(double));
-        double *weights = (double*)malloc(numCampioni * sizeof(double));
-
-        if (xValues == NULL || yValues == NULL || weights == NULL) {
-            printf("Errore: impossibile allocare memoria per il filtro di mediana\n");
+            free(campioni);
             exit(1);
         }
-        
-        // Copio valori e assegno pesi sulla base di confidenza e posizione originale
-        for (int j = 0; j < numCampioni; j++) {
-            xValues[j] = campioni[i][j].x;
-            yValues[j] = campioni[i][j].y;
+    }
 
-            weights[j] = campioni[i][j].confidenza;
-            if (j==0) weights[j] *= 2.0; // raddoppio peso per posizione originale
-        }
-        
-        #if 0
-        // Ordinamento semplice per trovare la mediana
-        for (int j = 0; j < numCampioni-1; j++) {
-            for (int k = j+1; k < numCampioni; k++) {
-                if (xValues[j] > xValues[k]) {
-                    double temp = xValues[j];
-                    xValues[j] = xValues[k];
-                    xValues[k] = temp;
-                }
-                if (yValues[j] > yValues[k]) {
-                    double temp = yValues[j];
-                    yValues[j] = yValues[k];
-                    yValues[k] = temp;
-                }
-            }
-        }
-            #endif
-        // Ordinamento per coordinate x
-        for (int j = 0; j < numCampioni-1; j++) {
-            for (int k = j+1; k < NUM_MEDIANA; k++) {
-                if (xValues[j] > xValues[k]) {
-                    // Scambio x
-                    double temp = xValues[j];
-                    xValues[j] = xValues[k];
-                    xValues[k] = temp;
-                    
-                    // Scambio peso corrispondente
-                    temp = weights[j];
-                    weights[j] = weights[k];
-                    weights[k] = temp;
-                }
-            }
-        }
-        
-        // Ordinamento per coordinate y
-        for (int j = 0; j < numCampioni-1; j++) {
-            for (int k = j+1; k < numCampioni; k++) {
-                if (yValues[j] > yValues[k]) {
-                    // Scambio y
-                    double temp = yValues[j];
-                    yValues[j] = yValues[k];
-                    yValues[k] = temp;
-                }
-            }
-        }
-        
-        // Aggiorna le coordinate con la mediana
-        coordinate[i].x = xValues[numCampioni/2];
-        coordinate[i].y = yValues[numCampioni/2];
+    // Genero campioni perturbando le coordinate iniziali
+    for(int i = 0; i < numCampioni; i++){
+        for (int j = 0; j < numNodi; j++) {
+            if(i==0){ // Primo campione, nessuna perturbazione
+                campioni[j][i] = coordinate[j];
+            } else {
+                // I primi due nodi sono fissi 
+                if (j < 2) {
+                    campioni[j][i] = coordinate[j];
+                } else {
+                    // Sistemo valore di "noise" in base alla confidenza
+                    // confidenza = 0.0 -> rumore massimo
+                    // confidenza = 1.0 -> nessun rumore
+                    double confidenza = coordinate[j].confidenza;
+                    if (confidenza < 0.01) confidenza = 0.01; 
+                    if(confidenza > 0.99) confidenza = 0.99; 
 
-        free(xValues);
-        free(yValues);
-        free(weights);
+                    double noise = UWB_ERRORE * (1.0 - confidenza);
+
+                    // Definisco un minimo e un massimo per il rumore
+                    noise = fmax(noise, UWB_ERRORE * 0.05); // minimo rumore
+                    noise = fmin(noise, UWB_ERRORE * 1.5); // massimo rumore
+
+                    campioni[j][i].x = coordinate[j].x + random_double(-noise, noise);
+                    campioni[j][i].y = coordinate[j].y + random_double(-noise, noise);
+                    campioni[j][i].confidenza = coordinate[j].confidenza; 
+
+
+                }
+            }
+        }   
+    }
+
+
+     // Calcola la mediana delle coordinate per ogni nodo
+    for (int i = 2; i < numNodi; i++) {  // Solo per i nodi dopo i primi due
+        // Calcola la mediana geometrica per il nodo i
+        Point2D mediana = calcolaMedianaGeometrica(campioni[i], numCampioni, 100, 0.01);
+
+        // Aggiorna le coordinate del nodo i con la mediana calcolata
+        coordinate[i].x = mediana.x;
+        coordinate[i].y = mediana.y;
+        coordinate[i].confidenza = mediana.confidenza; 
     }
 
 
@@ -1224,10 +1282,91 @@ void costruisci_topologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Po
     // Generatore numeri casuali per generare configurazioni random
     srand(time(NULL));
 
+    // -- RANSAC --
     // Verifico con RANSAC gli outlier definendo una maschera
     bool inlier[MAX_NODES];
-    bool inlier_mask[MAX_NODES][MAX_NODES];
+    // Inizializzo la maschera a false
+    for(int i = 0; i < numNodi; i++){
+        inlier[i] = false;
+    }
     ransac_outlier(distanze, numNodi, inlier);
+
+    // Costruisco inlier_mask
+    bool inlier_mask[MAX_NODES][MAX_NODES];
+    for (int i = 0; i < numNodi; ++i) {
+        for (int j = 0; j < numNodi; ++j) {
+            if (i == j) {
+                inlier_mask[i][j] = false;
+            } else {
+                inlier_mask[i][j] = inlier[i] && inlier[j];
+            }
+        }
+    }
+
+    // -- MDS --
+    // Utile per posizionamento iniziale
+    // Creo vettore di coordinate iniziali temporanee
+    //Point2D tempCoord[MAX_NODES];
+    for(int i=0; i<numNodi; i++){
+        tempCoord[i].x = 0.0;
+        tempCoord[i].y = 0.0;
+        tempCoord[i].confidenza = 0.0;
+    }
+
+    // Richiamo MDS classico
+    MDS_classico(distanze, inlier, numNodi, tempCoord);
+
+    // Imposta la confidenza iniziale dopo MDS
+    // I nodi usati da MDS (inlier) avranno coordinate aggiornate.
+    for(int i = 0; i < numNodi; ++i) {
+        if(inlier[i]) { // Nodi processati da MDS
+            tempCoord[i].confidenza = 1.0; // Alta confidenza iniziale
+        } else { // Nodi non processati da MDS 
+            // Mantengono coordinate iniziali e bassa confidenza
+            tempCoord[i].confidenza = 0.1; // Bassa confidenza
+        }
+    }
+
+    // -- Simulated Annealing --
+    Point2D migliori_coordinate[MAX_NODES]; // vettore temporaneo in cui salvo coordinate più precise
+    double bestErrore = DBL_MAX;
+
+    for(int start = 0; start < NUM_CAMPIONI; start++){
+        Point2D tempSACoord[MAX_NODES];
+
+        for (int i = 0; i < numNodi; ++i) {
+            tempSACoord[i] = tempCoord[i];
+            // if (start > 0 && i >=2) { // dati i nodi 0 e 1 sono ancore fisse
+            //    tempSACoord[i].x += random_double(-0.05, 0.05) * UWB_ERRORE;
+            //    tempSACoord[i].y += random_double(-0.05, 0.05) * UWB_ERRORE;
+            // }
+        }
+
+        ottimizzaTopologia(distanze, numNodi, tempSACoord, inlier_mask);
+        
+        // Applico filtro mediana
+        filtroMediana(tempSACoord, numNodi, NUM_MEDIANA);
+
+        // Valuto errore attuale
+        double erroreAttuale = erroreTopologia(distanze, tempSACoord, numNodi, inlier_mask);
+
+        // Aggiorna la soluzione migliore trovata finora
+        if (erroreAttuale < bestErrore) {
+            bestErrore = erroreAttuale;
+            for (int i = 0; i < numNodi; ++i) {
+                migliori_coordinate[i] = tempSACoord[i];
+            }
+        }
+
+    }
+
+    // Copia le migliori coordinate trovate nel vettore di output
+    for (int i = 0; i < numNodi; ++i) {
+        coordinate[i] = migliori_coordinate[i];
+    }
+
+    visualizzaTopologiaAvanzata(coordinate, numNodi);
+    
 
     #if 0
     rilevamentoOutlier(distanze, numNodi);

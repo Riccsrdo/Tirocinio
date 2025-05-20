@@ -144,6 +144,16 @@ double random_gaussian(double mu, double sigma);
 void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Point2D coordinate[], bool inlier_mask[MAX_NODES][MAX_NODES]);
 
 /**
+ * @brief Calcola la mediana geometrica delle coordinate
+ * 
+ * @param campioni array di campioni di Point2D
+ * @param numCampioni numero di campioni
+ * @param maxIterazioni numero massimo di iterazioni
+ * @param tolleranza tolleranza per la convergenza
+ */
+Point2D calcolaMedianaGeometrica(Point2D campioni[], int numCampioni, int maxIterazioni, double tolleranza);
+
+/**
  * @brief Filtra i valori mediani delle coordinate calcolate
  * 
  * @param coordinate vettore di coordinate della topologia
