@@ -996,6 +996,14 @@ static void process_spi_command(uint8_t *cmd_data, uint8_t cmd_len)
         
         case SPI_CMD_MEASURE_DISTANCE:
           if(cmd_len>=10) { // Comando + 8 byte id + numero misurazioni
+
+            // Passo a modalità Initiator, se non lo è già
+            if(device_mode!=DEVICE_MODE_INITIATOR){
+                device_mode = DEVICE_MODE_INITIATOR;
+                // Applica le configurazioni hardware per l'initiator
+                dwt_setrxtimeout(65000);
+                dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
+            }
             
             // Estraggo id target
             uint64_t target_id = 0;
@@ -1016,12 +1024,32 @@ static void process_spi_command(uint8_t *cmd_data, uint8_t cmd_len)
             current_avg_measurement = perform_average_measurement(target_id, num_samples);
 
             performing_avg_measurement = false;
+
+            // Ritorno a responder
+            device_mode = DEVICE_MODE_RESPONDER;
+            // Applica le configurazioni hardware per il responder
+            dwt_setrxtimeout(0);
+            dwt_rxreset(); // Resetta la ricezione
           }
           break;
 
         case SPI_CMD_MEASURE_ALL_DISTANCES:
-          measure_all_distances(10);
-          break;
+          // Passo a modalità Initiator, se non lo è già
+            if(device_mode!=DEVICE_MODE_INITIATOR){
+                device_mode = DEVICE_MODE_INITIATOR;
+                // Applica le configurazioni hardware per l'initiator
+                dwt_setrxtimeout(65000);
+                dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
+            }
+
+            measure_all_distances(10);
+
+            // Ritorno a responder
+            device_mode = DEVICE_MODE_RESPONDER;
+            // Applica le configurazioni hardware per il responder
+            dwt_setrxtimeout(0);
+            dwt_rxreset(); // Resetta la ricezione
+            break;
 
         case SPI_CMD_GET_INFO:
              // Action is to prepare response
@@ -1366,6 +1394,7 @@ static void spi_slave_init(void)
           }
           
           if(!in_config_mode) { //&& device_mode == DEVICE_MODE_RESPONDER){
+          #if 0
           // --- 3. Perform UWB Ranging ---
           //printf("Gestisco misurazioni\r\n");
           if (device_mode == DEVICE_MODE_INITIATOR) {
@@ -1395,6 +1424,15 @@ static void spi_slave_init(void)
                 // Add a small delay if ss_resp_run returns immediately without receiving
                 nrf_delay_ms(10); // Small delay to prevent busy-waiting if no poll received
           }
+          #endif
+          if(device_mode==DEVICE_MODE_RESPONDER && !performing_avg_measurement) {
+              // dispositivo in ascolto
+              ss_resp_run(DEVICE_ID);
+
+          } else {
+              nrf_delay_ms(10); // busy wait
+          }
+
         }
         
   
