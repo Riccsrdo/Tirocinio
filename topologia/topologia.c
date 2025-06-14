@@ -8,6 +8,7 @@ double random_double(double min, double max){
     return min + (max - min) * ((double)rand() / RAND_MAX);
 }
 
+#if 0
 double calcolaErrore(double distMisurata, double distCalcolata){
     // Controllo se la differenza è nel range di errore UWB
     double diff = fabs(distCalcolata - distMisurata);
@@ -19,6 +20,11 @@ double calcolaErrore(double distMisurata, double distCalcolata){
     }else {
         return pow(diff - UWB_ERRORE, 2);
     }
+}
+#endif
+double calcolaErrore(double distMisurata, double distCalcolata) {
+    double diff = distCalcolata - distMisurata;
+    return pow(diff, 2);
 }
 
 int calcolaIntersezioneCerchi(Point2D p1, double r1, Point2D p2, double r2, Point2D* intersezione1, Point2D* intersezione2) {
@@ -90,7 +96,7 @@ void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi, bool inl
 
 
     // Itero per x volte per permettere il ciclo di iterazioni RANSAC
-    for(int i = 0; i< 200;i++){
+    for(int i = 0; i< 500;i++){
         // Prendo tre nodi casualmente
         int nodo1 = rand() % numNodi;
         int nodo2 = rand() % numNodi;
@@ -261,6 +267,7 @@ void ransac_outlier(double distanze[MAX_NODES][MAX_NODES], int numNodi, bool inl
                 // Calcolo la distanza tra i nodi k e c
                 double dkc = calc_dist(coordinate_stimate[k], coordinate_stimate[c]);
                 // Correggo la distanza nella matrice delle distanze
+                
                 if(fabs(distanze[k][c] - dkc) > UWB_ERRORE * 0.5){
                     distanze[k][c] = dkc;
                     distanze[c][k] = dkc;
@@ -1088,7 +1095,12 @@ void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Poin
             iterSenzaMiglioramento = 0; // resetto contatore
         }
 
-        temperatura *= fattore_raffreddamento; // riduco temperatura
+        // temperatura *= fattore_raffreddamento; // riduco temperatura
+        if (temperatura > TEMP_FINALE) { // Continua a raffreddare solo se sopra la temp finale
+            temperatura *= SA_ALPHA;
+        } else {
+            temperatura = TEMP_FINALE; // O interrompi se la temp finale è solo una soglia
+        }
     }
 
     // ottenuta configurazione migliorata, la salvo

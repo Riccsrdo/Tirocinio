@@ -11,13 +11,14 @@
 
 #define MAX_NODES 16 /* Configurabile se configurato anche su Firmware*/
 #define UWB_ERRORE 0.40 // circa 40cm
-#define NUM_ITERATIONS 8000 // iterazioni per convergere dati rumorosi
+#define NUM_ITERATIONS 10000  // iterazioni per convergere dati rumorosi
 #define LEARNING_RATE 0.01 // tasso apprendimento ottimizzazione (valore di moltiplicazione per riduzione temperatura)
-#define TEMP_INIZIALE 2.0 // temperatura per simulated annealing
-#define TEMP_FINALE 0.0005 // temperatura finale di accettazione
+#define TEMP_INIZIALE 1.0 // temperatura per simulated annealing
+#define TEMP_FINALE 0.00001  // temperatura finale di accettazione
 #define NUM_CAMPIONI 20 // numero di posizioni casuali da provare nel multistart approach
-#define NUM_MEDIANA 9 // campioni mediana
-#define CONVERGENCE_THRESHOLD 1e-5 // soglia di convergenza
+#define NUM_MEDIANA 15 // campioni mediana
+#define CONVERGENCE_THRESHOLD 1e-7 // soglia di convergenza
+#define SA_ALPHA 0.995
 
 typedef struct {
     double x;
@@ -142,16 +143,6 @@ double random_gaussian(double mu, double sigma);
  * @param inlier_mask maschera di inlier
  */
 void ottimizzaTopologia(double distanze[MAX_NODES][MAX_NODES], int numNodi, Point2D coordinate[], bool inlier_mask[MAX_NODES][MAX_NODES]);
-
-/**
- * @brief Calcola la mediana geometrica delle coordinate
- * 
- * @param campioni array di campioni di Point2D
- * @param numCampioni numero di campioni
- * @param maxIterazioni numero massimo di iterazioni
- * @param tolleranza tolleranza per la convergenza
- */
-Point2D calcolaMedianaGeometrica(Point2D campioni[], int numCampioni, int maxIterazioni, double tolleranza);
 
 /**
  * @brief Filtra i valori mediani delle coordinate calcolate
