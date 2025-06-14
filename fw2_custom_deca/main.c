@@ -43,6 +43,7 @@
  #include "nrf_drv_gpiote.h"
  #include "utils.h"
  #include "math.h"
+ #include "sys/time.h"
  //#include "UART.h"
  
  /* Dichiaro in precedenza le funzioni che dovrÃ² usare successivamente */
@@ -82,13 +83,13 @@
  // Configurazione per condizioni di NLoS
  static dwt_config_t nlos_config = {
      5,               /* Channel number. */
-     DWT_PRF_64M,     /* Pulse repetition frequency. */
+     DWT_PRF_16M,     /* Pulse repetition frequency. */
      DWT_PLEN_1024,    /* Preamble length. Used in TX only. */
      DWT_PAC32,        /* Preamble acquisition chunk size. Used in RX only. */
      10,              /* TX preamble code. Used in TX only. */
      10,              /* RX preamble code. Used in RX only. */
      0,               /* 0 to use standard SFD, 1 to use non-standard SFD. */
-     DWT_BR_6M8,      /* Data rate. */
+     DWT_BR_850K,      /* Data rate. Reduced to 850K, increasing receiver sensibility */
      DWT_PHRMODE_STD, /* PHY header mode. */
      (1025 + 64 - 32)    /* SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only. */
  };
@@ -136,6 +137,8 @@
 
 
  volatile bool nlos_mode=false; // flag booleana di check se dispositivo in modalità NLoS
+
+ 
  
 #if 1
 
@@ -213,7 +216,7 @@
  static volatile uint8_t config_num_devices = 0;
  static volatile uint64_t config_anchor_ids[MAX_RESPONDERS];
  static volatile bool config_anchor_enabled[MAX_RESPONDERS];
- static volatile bool continous_measurements = false;
+ static volatile bool continous_measurements = true;
  static volatile uint8_t current_spi_command = 0; // Store command being processed
 
 
@@ -1133,7 +1136,12 @@ static void spi_slave_init(void)
  #endif
  
  int main(void)
- {
+ {  
+
+    struct timeval t1,t2;
+    double elapsedTime;
+
+
    /* Setup some LEDs for debug Green and Blue on DWM1001-DEV */
     LEDS_CONFIGURE(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK);
     LEDS_ON(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK );
@@ -1195,7 +1203,32 @@ static void spi_slave_init(void)
    port_set_dw1000_fastrate();
  
    /* Configure DW1000. */
-   dwt_configure(&config);
+   uint8_t ntm1_value;
+   uint16_t ntm2_value;
+
+   // If NLOS_MODE
+   if(nlos_mode){
+      dwt_configure(&nlos_config); // Setup NLOS configuration for the device
+
+      // Configure leading edge algorithm for first path identification
+      dwt_write8bitoffsetreg(0x2E, LDE_CFG1_OFFSET, 0x09);
+      dwt_write16bitoffsetreg(0x2E, LDE_CFG2_OFFSET, 0x0004);
+
+   } else {
+      dwt_configure(&config);
+      
+      // We use standard values for LOS conditions
+      dwt_write8bitoffsetreg(0x2E, LDE_CFG1_OFFSET, 0x0D);
+      dwt_write16bitoffsetreg(0x2E, LDE_CFG2_OFFSET, 0x0007);
+   }
+
+   // We then modify the LDE_REPC register to make the configuration more robust
+   if(nlos_mode){
+      // Forces chip to use a lower LDE value, good for 16MHz preambles
+      dwt_write16bitoffsetreg(0x2E, LDE_REPC_OFFSET, 0x4000); // for 16MHz PRF
+   } else {
+      dwt_write16bitoffsetreg(0x2E, LDE_REPC_OFFSET, 0x28F0); // Standard value
+   }
 
    /* Initialization of the DW1000 interrupt */
    dwt_setcallbacks(&tx_conf_cb, &rx_ok_cb, &rx_to_cb, &rx_err_cb);
@@ -1242,6 +1275,19 @@ static void spi_slave_init(void)
    while(1) 
    {};
  #else
+  
+  /*
+  // Test misurazione tempo
+  if(device_mode==DEVICE_MODE_INITIATOR){
+    gettimeofday(&t1, NULL);
+    ss_init_run(1);
+    gettimeofday(&t2, NULL);
+    elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;      // sec to ms
+    elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
+    printf("%f ms.\n", elapsedTime);
+  }
+  */
+  
 
   while (true)
   {  
@@ -1319,7 +1365,7 @@ static void spi_slave_init(void)
             //NRF_LOG_FLUSH();
           }
           
-          if(!in_config_mode && device_mode == DEVICE_MODE_RESPONDER){
+          if(!in_config_mode) { //&& device_mode == DEVICE_MODE_RESPONDER){
           // --- 3. Perform UWB Ranging ---
           //printf("Gestisco misurazioni\r\n");
           if (device_mode == DEVICE_MODE_INITIATOR) {

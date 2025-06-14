@@ -2,6 +2,7 @@
 #define UTILS_H
 
 #define POLL_RX_TO_RESP_TX_DLY_UUS  2000
+#define POLL_RX_TO_RESP_TX_DLY_UUS_NLOS 6000  // Valore maggiore per NLoS
 
 
 #include <stdbool.h>
@@ -22,6 +23,9 @@ typedef struct {
   uint64_t id;
   bool valid;
   double distance;
+  bool nlos_suspection; // Bool value set to true if NLOS detected
+  double first_path_power; // used in the analysis of the reception of signal to identify NLOS
+  double peak_path_power; // used just like first_path_power
 } responder_distance_t;
 
 /* Dichiarazioni delle variabili condivise */
@@ -32,6 +36,7 @@ extern volatile uint64_t DEVICE_ID;
 extern volatile bool anchor_enabled[MAX_RESPONDERS];
 extern responder_distance_t distances[MAX_RESPONDERS];
 extern volatile bool new_spi_command_received;
+extern volatile bool nlos_mode;
 
 /* Dichiarazioni delle funzioni condivise */
 extern int ss_init_run(uint64_t anchor_id);

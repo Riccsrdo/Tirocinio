@@ -29,6 +29,7 @@
 #include "port_platform.h"
 //#include "ss_init_main.h"
 #include "utils.h"
+#include <math.h>
 
 #define APP_NAME "SS TWR INIT v1.3"
 
@@ -328,6 +329,36 @@ int ss_init_run(uint64_t dev_id)
         /* Resetting receive interrupt flag */
         rx_int_flag = 0;
 
+        // Check diagnostic data to identify NLOS
+        uint32_t fqual = dwt_read32bitreg(RX_FQUAL_ID);
+        uint16_t pp_ampl = (uint16_t) (fqual >> 16); // peak path amplitude
+        uint16_t std_noise = (uint16_t) dwt_read16bitoffsetreg(RX_FQUAL_ID, 0x00);
+        uint16_t fp_ampl1 = dwt_read16bitoffsetreg(RX_TIME_ID, RX_TIME_FP_AMPL1_OFFSET); // check first path power
+        uint16_t fp_ampl2 = dwt_read16bitoffsetreg(RX_FQUAL_ID, 0x02);
+        uint16_t fp_ampl3 = dwt_read16bitoffsetreg(0x2E, 0x04); 
+        uint16_t cir_pwr = dwt_read16bitoffsetreg(RX_FQUAL_ID, 0x06);
+
+        // Check if noise is null
+        if(std_noise == 0) std_noise = 1;
+
+        // Calculate power estimation in dB
+        double f1 = (double)fp_ampl1;
+        double f2 = (double)fp_ampl2;
+        double f3 = (double)fp_ampl3;
+        double N = (double)std_noise;
+        double C_raw = (double)cir_pwr;
+
+        // A constant for power formula
+        // For PRF 16MHz, the values is 121.74
+        double A_const = 121.74;
+
+        double firstPathPower = 10.0 * log10((f1*f1 + f2*f2 + f3*f3) / (N*N));
+        double channelPower = 10.0 * log10((C_raw * pow(2.0, 17.0)) / (N*N));
+
+        // Check the difference between total channel power and first path power
+        // Value is tunable
+        bool is_nlos = (channelPower - firstPathPower) > 8.0;
+
         // Cerco indice dell'array di ancore a cui è memorizzato il device con dev_id
         int target_index = -1;
         for(int i=0; i<MAX_RESPONDERS; i++){
@@ -343,6 +374,7 @@ int ss_init_run(uint64_t dev_id)
           distances[target_index].id = dev_id;
           distances[target_index].distance = distance;
           distances[target_index].valid = true;
+          distances[target_index].nlos_suspection = is_nlos;
         }
       } 
       else {
@@ -593,7 +625,9 @@ int ss_resp_run(uint64_t dev_id)
             poll_rx_ts = get_rx_timestamp_u64();
 
             /* Compute final message transmission time. */
-            resp_tx_time = (poll_rx_ts + (POLL_RX_TO_RESP_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
+            uint32_t delay_to_use = nlos_mode ? POLL_RX_TO_RESP_TX_DLY_UUS_NLOS : POLL_RX_TO_RESP_TX_DLY_UUS;
+            resp_tx_time = (poll_rx_ts + (delay_to_use * UUS_TO_DWT_TIME)) >> 8;
+            //resp_tx_time = (poll_rx_ts + (POLL_RX_TO_RESP_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
             
             /* Response TX timestamp is the transmission time we programmed plus the antenna delay. */
             resp_tx_ts = (((uint64)(resp_tx_time & 0xFFFFFFFEUL)) << 8) + TX_ANT_DLY;
