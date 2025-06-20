@@ -325,7 +325,7 @@ int dwm_set_device_id_at(uint8_t index, uint64_t device_id){
     return 0;
 }
 
-int dwm_measure_average(uint64_t target_id, uint8_t num_samples, AverageMeasurement* result){
+int dwm_measure_average_internal(uint64_t target_id, uint8_t num_samples, AverageMeasurement* result){
     // Controllo che il puntatore sia valido
     if(!result) {
         fprintf(stderr, "Errore: Parametri non validi per dwm_measure_average.\n");
@@ -400,7 +400,7 @@ int dwm_measure_average(uint64_t target_id, uint8_t num_samples, AverageMeasurem
 
 }
 
-int dwm_measure_average_all(uint8_t num_samples, AverageMeasurement* results, int max_results, uint8_t* out_valid_count){
+int dwm_measure_average_all_internal(uint8_t num_samples, AverageMeasurement* results, int max_results, uint8_t* out_valid_count){
     // Controllo che i puntatori  e i parametri siano corretti
     if( !results || !out_valid_count || max_results <= 0){
         fprintf(stderr, "Errore nei parametri della funzione di measure_average_all\n");

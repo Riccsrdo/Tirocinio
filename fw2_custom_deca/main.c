@@ -105,6 +105,10 @@
  #define TX_ANT_DLY 16300
  #endif
  #define RX_ANT_DLY 16456
+
+ // Delay Antenne
+ volatile int RECEIVER_DELAY = 16456;
+ volatile int TRANSMITTER_DELAY = 16300;
  
  //--------------dw1000---end---------------
  
@@ -148,15 +152,15 @@
  static const nrf_drv_spis_t m_spis = NRF_DRV_SPIS_INSTANCE(SPIS_INSTANCE); // < SPIS instance.
 
 
- // Pin
+ // Pin: DEPRECATI
 #define MY_SPIS_CSN_PIN    NRF_GPIO_PIN_MAP(0, 28) // Modulo Pin 29 -> Connettore Pin 24 (CS_RPI)
-#define MY_SPIS_SCK_PIN    NRF_GPIO_PIN_MAP(0, 8)  // Modulo Pin 25 -> Connettore Pin 23 (SPI1_CLK) <- NOTA: usa P0.08!
+#define MY_SPIS_SCK_PIN    NRF_GPIO_PIN_MAP(0, 8)  // Modulo Pin 25 -> Connettore Pin 23 (SPI1_CLK) 
 #define MY_SPIS_MOSI_PIN   NRF_GPIO_PIN_MAP(0, 30) // Modulo Pin 27 -> Connettore Pin 19 (SPI1_MOSI)
 #define MY_SPIS_MISO_PIN   NRF_GPIO_PIN_MAP(0, 31) // Modulo Pin 26 -> Connettore Pin 21 (SPI1_MISO)
 
  // Dimensione buffer per ricezione/invio dati dal/al master
  #define SPI_CMD_BUFFER_SIZE 32 // Max command length from master
- #define SPI_TX_DATA_BUFFER_SIZE 512 // Max data length to master
+ #define SPI_TX_DATA_BUFFER_SIZE 255 // Max data length to master
  
  // Buffer di salvataggio dati da inviare via SPI
  static uint8_t m_spi_rx_buf[SPI_CMD_BUFFER_SIZE]; 
@@ -1265,8 +1269,8 @@ static void spi_slave_init(void)
    dwt_setinterrupt(DWT_INT_TFRS | DWT_INT_RFCG | DWT_INT_RFTO | DWT_INT_RXPTO | DWT_INT_RPHE | DWT_INT_RFCE | DWT_INT_RFSL | DWT_INT_SFDT, 1);
 
    /* Apply default antenna delay value. See NOTE 2 below. */
-   dwt_setrxantennadelay(RX_ANT_DLY);
-   dwt_settxantennadelay(TX_ANT_DLY);
+   dwt_setrxantennadelay(RECEIVER_DELAY); //RX_ANT_DLY);
+   dwt_settxantennadelay(TRANSMITTER_DELAY); // TX_ANT_DLY);
  
    /* Set preamble timeout for expected frames. See NOTE 3 below. */
    // dwt_setpreambledetecttimeout(0); // PRE_TIMEOUT

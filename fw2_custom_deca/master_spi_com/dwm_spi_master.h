@@ -2,7 +2,11 @@
 #define DWM_SPI_MASTER_RPI_H
 
 #include <stdint.h>
-#include <stddef.h> // Per size_t
+#include <stddef.h> 
+
+#define SPI_DEVICE "/dev/spidev0.0"
+#define SPI_SPEED 2000000 // 2 MHz
+#define SPI_MODE 2
 
 /*
 Tutti i possibili comandi che possono essere inviati al dispositivo slave (dwm1001-dev)

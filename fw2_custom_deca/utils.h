@@ -37,6 +37,8 @@ extern volatile bool anchor_enabled[MAX_RESPONDERS];
 extern responder_distance_t distances[MAX_RESPONDERS];
 extern volatile bool new_spi_command_received;
 extern volatile bool nlos_mode;
+extern volatile int RECEIVER_DELAY;
+extern volatile int TRANSMITTER_DELAY;
 
 /* Dichiarazioni delle funzioni condivise */
 extern int ss_init_run(uint64_t anchor_id);
