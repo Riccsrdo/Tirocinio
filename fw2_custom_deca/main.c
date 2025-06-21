@@ -195,6 +195,8 @@
 
  #define SPI_SET_NLOS_MODE 0x60 // comando che permette di setuppare la modalità NLOS usando pacchetti più grandi
  #define SPI_SET_LOS_MODE 0x61 // imposta a LoS con pacchetti più piccoli
+ #define SPI_SET_ANTENNA_TX_DELAY 0x62 // Permette di modificare il delay dell'antenna per calibrazione in transmission
+ #define SPI_SET_ANTENNA_RX_DELAY 0x63 // idem ma in ricezione
 
  // Misurazioni media
  typedef struct {
@@ -230,9 +232,9 @@
  #endif
 
  /* Gestione del buffer di comandi provenienti da UART */
-#define CMD_BUFFER_SIZE 32
-static char cmd_buffer[CMD_BUFFER_SIZE];
-static uint8_t cmd_buffer_index = 0;
+//#define CMD_BUFFER_SIZE 32
+//static char cmd_buffer[CMD_BUFFER_SIZE];
+//static uint8_t cmd_buffer_index = 0;
  
  #ifdef USE_FREERTOS
  
@@ -271,6 +273,7 @@ static uint8_t cmd_buffer_index = 0;
  #endif
  
  /* Funzione che gestisce i comandi di setting inviati via UART*/
+#if 0
 static void process_uart_command(char *cmd)
 {
   /* Rimuovi spazi iniziali e finali */
@@ -460,6 +463,7 @@ static void uart_task_function(void *pvParameter)
      cmd_buffer[cmd_buffer_index++] = data;
    }
  }
+#endif
 
 
  /* DWM1000 interrupt initialization and handler definition */
@@ -678,6 +682,8 @@ static void prepare_spi_response(uint8_t command_processed){
 
         case SPI_SET_LOS_MODE:
         case SPI_SET_NLOS_MODE:
+        case SPI_SET_ANTENNA_RX_DELAY:
+        case SPI_SET_ANTENNA_TX_DELAY:
 
         default:
              // Unknown command or error during processing
@@ -1073,6 +1079,29 @@ static void process_spi_command(uint8_t *cmd_data, uint8_t cmd_len)
             // imposto modalità a LoS
             nlos_mode=false;
             dwt_configure(&config);
+            break;
+        
+        case SPI_SET_ANTENNA_RX_DELAY:
+            if(cmd_len>=3){ // comando + 2 byte delay
+                uint16_t delay = cmd_data[1] | (cmd_data[2]<<8);
+                RECEIVER_DELAY = delay;
+                dwt_setrxantennadelay(RECEIVER_DELAY);
+                printf("Antenna receiver delay set to: %u\r\n", RECEIVER_DELAY);
+            } else {
+                printf("Command for rx delay setting received, but content is not valid!\r\n");
+            }
+            break;
+
+        case SPI_SET_ANTENNA_TX_DELAY:
+            if(cmd_len>=3){
+                uint16_t delay = cmd_data[1] | (cmd_data[2]<<8);
+                TRANSMITTER_DELAY = delay;
+                dwt_settxantennadelay(TRANSMITTER_DELAY);
+                printf("Antenna transmitter delay set to: %u\r\n", TRANSMITTER_DELAY);
+            } else {
+                printf("Command for tx delay setting received, but content is not valid!\r\n");
+            }
+
             break;
 
         default:
