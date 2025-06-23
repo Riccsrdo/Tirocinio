@@ -3,6 +3,8 @@
 # ignora cartelle
 grafici/
 ex-lib/
+ukf/
+cestino/
 
 # ignora eseguibili e file .o
 *.exe
@@ -11,4 +13,4 @@ ex-lib/
 #ignora file specifico
 dataset.csv
 
-
+.venv/
