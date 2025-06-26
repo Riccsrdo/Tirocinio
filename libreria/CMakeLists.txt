@@ -11,34 +11,33 @@ if(DEBUG_FLAG)
     add_compile_definitions(Debug)
 endif()
 
-set(LIB_TYPE STATIC)
-if(BUILD_SHARED)
-    set(LIB_TYPE SHARED)
-endif()
-
-# --- Libreria dinamica ---
-
-# creazione libreria 
-add_library(dwm_master ${LIB_TYPE} src/dwm_master.c)
+# --- Definizione della libreria ---
+add_library(dwm_master src/dwm_master.c src/dwm_utilities.c)
 
 if(BUILD_SHARED)
-        # impostazioni libreria dinamica
-        set_target_properties(dwm_master_shared PROPERTIES
-                OUTPUT_NAME DWM_Master
-                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib # per Windows
-                PUBLIC_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/include/dwm_master.h 
-        )
+    set_target_properties(dwm_master PROPERTIES TYPE SHARED)
 else()
-        # impostazioni libreria statica
-        set_target_properties(dwm_master_static PROPERTIES
-                OUTPUT_NAME DWM_Master
-                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-                PUBLIC_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/include/dwm_master.h 
-        )
+    set_target_properties(dwm_master PROPERTIES TYPE STATIC)
 endif()
 
-#  directory header
-target_include_directories(dwm_master PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+set_target_properties(dwm_master PROPERTIES OUTPUT_NAME DWM_Master)
+
+# --- Header directory ---
+
+target_include_directories(dwm_master
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+# per librerie condivise in unix
+set_target_properties(dwm_master PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# Per creare eseguibile di test:
+#
+# add_executable(test main.c)
+#
+# collego libreria all'eseguibile di test:
+# target_link_libraries(test dwm_master)
 
 
 

@@ -82,16 +82,6 @@ int dwm_spi_init(const char* device, uint32_t speed, uint8_t mode);
 void dwm_spi_close(void);
 
 /**
- * @brief Esegue una transazione SPI (invio e ricezione simultanei). 
- *
- * @param tx_buf Buffer con i dati da inviare.
- * @param rx_buf Buffer dove memorizzare i dati ricevuti.
- * @param len Numero di byte da trasferire.
- * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
- */
-int dwm_spi_transfer(uint8_t* tx_buf, uint8_t* rx_buf, size_t len);
-
-/**
  * @brief Invia un comando a singolo byte.
  *
  * @param command Il byte del comando da inviare.
@@ -137,22 +127,6 @@ int dwm_enable_device(uint64_t anchor_id);
  * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
 int dwm_disable_device(uint64_t anchor_id);
-
-/**
- * @brief Entra in modalità configurazione, permettendo di
- * impostare id dei dispositivi, e altre impostazioni
- * 
- * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
- */
-int dwm_enter_config_mode(void);
-
-/**
- * @brief Esco dalla modalità configurazione, tornando al normale
- * funzionamento
- * 
- * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
- */
-int dwm_exit_config_mode(void);
 
 /**
  * @brief Imposta numero dispositivi attualmente in funzione con cui effettuare la comunicazione

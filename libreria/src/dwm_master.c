@@ -1,4 +1,5 @@
 #include "dwm_master.h"
+#include "dwm_utilities.h"
 
 // Variabili statiche per la gestione del device SPI
 static int spi_fd = -1; // File descriptor per il device SPI
@@ -86,30 +87,6 @@ void dwm_spi_close(void) {
     }
 }
 
-int dwm_spi_transfer(uint8_t* tx_buf, uint8_t* rx_buf, size_t len) {
-    if (spi_fd < 0) {
-        fprintf(stderr, "Errore: SPI non inizializzato.\n");
-        return EXIT_FAILURE;
-    }
-
-    struct spi_ioc_transfer tr = {
-        .tx_buf = (unsigned long)tx_buf,
-        .rx_buf = (unsigned long)rx_buf,
-        .len = len,
-        .delay_usecs = 0, // Nessun ritardo tra i byte
-        .speed_hz = spi_speed,
-        .bits_per_word = spi_bits,
-        // .cs_change = 0, 
-    };
-
-    int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr); // Invia 1 struttura spi_ioc_transfer
-    if (ret < 1) { // 
-        print_spi_error("Errore durante SPI transfer (ioctl)");
-        return EXIT_FAILURE;
-    }
-    return EXIT_SUCCESS; // Successo
-}
-
 int dwm_send_command(uint8_t command) {
     uint8_t tx = command;
     uint8_t rx; // Buffer di ricezione (ignorato)
@@ -185,29 +162,6 @@ int dwm_disable_device(uint64_t anchor_id){
     }
 
     printf("Disabilitata ancora con id 0x%llx\n", (unsigned long long)anchor_id);
-    return EXIT_SUCCESS;
-}
-
-int dwm_enter_config_mode(void){
-    int ret = dwm_send_command(CMD_ENTER_CONFIG_MODE);
-    if(ret!=0){
-        fprintf(stderr, "Errore nell'invio comando ENTER_CONFIG_MODE\n");
-        return EXIT_FAILURE;
-    }
-
-    printf("Dispositivo ora in modalità config!\n");
-    return EXIT_SUCCESS;
-}
-
-
-int dwm_exit_config_mode(void){
-    int ret = dwm_send_command(CMD_EXIT_CONFIG_MODE);
-    if(ret!=0){
-        fprintf(stderr, "Errore nell'invio comando EXIT_CONFIG_MODE\n");
-        return EXIT_FAILURE;
-    }
-
-    printf("Dispositivo uscito dalla modalità configurazione!\n");
     return EXIT_SUCCESS;
 }
 
