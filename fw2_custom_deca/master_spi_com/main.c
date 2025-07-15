@@ -35,10 +35,11 @@ int main() {
         return EXIT_FAILURE;
     }
     
-    // printf("Invio comando SET_MODE_INIT...\n");
-    // dwm_send_command(CMD_SET_MODE_INIT);
-    // sleep(1); // Pausa per dare tempo al DWM di cambiare modo
+    printf("Invio comando SET_MODE_RESP...\n");
+    dwm_send_command(CMD_SET_MODE_RESP);
+    sleep(1); // Pausa per dare tempo al DWM di cambiare modo
 
+    /*
     printf("Avvio ciclo di richiesta distanze (premi Ctrl+C per uscire)...\n");
 
     while (running) {
@@ -65,6 +66,7 @@ int main() {
 
         sleep(1); // Attendi 1 secondo tra le richieste
     }
+    */
 
     // Cleanup
     dwm_spi_close();

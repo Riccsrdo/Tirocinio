@@ -1,4 +1,5 @@
 #include "include/dwm_utilities.h"
+#include "dwm_master.h" 
 
 int dwm_spi_transfer(uint8_t* tx_buf, uint8_t* rx_buf, size_t len) {
     if (spi_fd < 0) {
@@ -18,7 +19,7 @@ int dwm_spi_transfer(uint8_t* tx_buf, uint8_t* rx_buf, size_t len) {
 
     int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr); // Invia 1 struttura spi_ioc_transfer
     if (ret < 1) { // 
-        print_spi_error("Errore durante SPI transfer (ioctl)");
+        //print_spi_error("Errore durante SPI transfer (ioctl)");
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS; // Successo
@@ -47,11 +48,12 @@ int dwm_exit_config_mode(void){
     return EXIT_SUCCESS;
 }
 
+/*
 void kalman_init(KalmanFilter *kf, double distanza_iniziale, double r_std, double q_std)
 {
-    /*
-    Inizializzo il filtro di Kalman con la distanza iniziale e le varie matrici e valori
-    */
+    
+    //Inizializzo il filtro di Kalman con la distanza iniziale e le varie matrici e valori
+    
 
     // inizio dallo stato del sistema
     kf->x[0] = distanza_iniziale; // Posizione iniziale
@@ -77,9 +79,9 @@ void kalman_init(KalmanFilter *kf, double distanza_iniziale, double r_std, doubl
 
 double kalman_update(KalmanFilter *kf, double distanza_misurata, double r_std, double q_std)
 {
-    /*
-    Aggiorno il filtro di Kalman con la nuova misura della distanza
-    */
+    
+    //Aggiorno il filtro di Kalman con la nuova misura della distanza
+    
     if (kf->initialized == 0)
     {
         fprintf(stderr, "Errore: il filtro di Kalman non è stato inizializzato.\n");
@@ -103,7 +105,7 @@ double kalman_update(KalmanFilter *kf, double distanza_misurata, double r_std, d
     double dt2 = dt * dt; // Calcolo dt al quadrato
     double dt3 = dt2 * dt; // Calcolo dt al cubo
     double dt4 = dt3 * dt; // Calcolo dt alla quarta potenza
-    double q_std = q_std * q_std; // Varianza del rumore di processo
+    q_std = q_std * q_std; // Varianza del rumore di processo
 
     // Matrice di processo di rumore
     // traduzione della funzione Q_discrete_white_noise della libreria filterpy per modello a v. costante
@@ -174,5 +176,6 @@ double kalman_update(KalmanFilter *kf, double distanza_misurata, double r_std, d
     // ritorno la nuova distanza stimata
     return kf->x[0];
 }
+    */
 
 

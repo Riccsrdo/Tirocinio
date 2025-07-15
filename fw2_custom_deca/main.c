@@ -63,6 +63,19 @@
   static void prepare_config_info_for_spi(void);
   static void prepare_avg_measurement_for_spi(void);
   static void prepare_all_measurements_for_spi(void);
+
+
+ // ------------------ Finite State Machine per SPI ---------------------
+
+ typedef enum {
+    STATE_IDLE, // il dispositivo è in attesa di comandi
+    STATE_DATA_READY, // i dati sono pronti per essere letti dal master
+    STATE_PROCESSING, // esecuzione operazione logica
+    STATE_ERROR // errore verificato
+ } device_state_t;
+
+ static volatile device_state_t current_state = STATE_IDLE;  // parte da idle
+
  
  //-----------------dw1000----------------------------
  
@@ -174,6 +187,10 @@
  // Comandi possibili inviabili via SPI
  #define SPI_CMD_GET_DISTANCES 0x01 // Permette di ottenere le distanze
     // da implementare: comando che dato un id permette di ottenere la distanza dal dispositivo con quell'id
+
+ #define SPI_CMD_GET_STATUS 0x02 // permette di ottenere lo stato della FSM in cui si trova il dispositivo
+ #define SPI_CMD_READ_RESULTS 0x03 // master richiede risultati pronti
+  
  #define SPI_CMD_SET_MODE_INIT 0x10 // Permette di settare il dispositivo come iniziatore e misurare le distanze dagli
  // altri dispositivi
  #define SPI_CMD_SET_MODE_RESP 0x11 // Permette di mettersi in ascolto e attendere richieste di comunicazione
@@ -647,7 +664,7 @@ static void prepare_spi_response(uint8_t command_processed){
   switch (command_processed)
     {
         case SPI_CMD_GET_DISTANCES:
-        case SPI_CMD_SET_MODE_INIT: // Often good to return current state after setting
+        case SPI_CMD_SET_MODE_INIT:
         case SPI_CMD_SET_MODE_RESP:
         case SPI_CMD_SET_ID:
         case SPI_CMD_ENABLE_ANCHOR:
@@ -895,219 +912,251 @@ static void process_spi_command(uint8_t *cmd_data, uint8_t cmd_len)
 
     uint8_t command = cmd_data[0];
 
-    switch (command)
-    {
-        case SPI_CMD_GET_DISTANCES:
-            // Action is to prepare response, done after this function returns
-            break;
-
-        case SPI_CMD_SET_MODE_INIT:
-            if (device_mode != DEVICE_MODE_INITIATOR) {
-                device_mode = DEVICE_MODE_INITIATOR;
-                bool_mode_changed = true; // Signal UWB logic in main loop
-                printf("Cambiamento modalità a Iniziatore!\r\n");
-            }
-            break;
-
-        case SPI_CMD_SET_MODE_RESP:
-             if (device_mode != DEVICE_MODE_RESPONDER) {
-                device_mode = DEVICE_MODE_RESPONDER;
-                bool_mode_changed = true; // Signal UWB logic
-                printf("Cambiamento modalità a Responder!\r\n");
-            }
-            break;
-
-        case SPI_CMD_SET_ID:
-            if (cmd_len >= 9) { // comando + 8 byte dispositivo
-                uint64_t device_id = 0;
-                // Costruisco a partire dagli 8 byte ricevuti
-                for (int i = 0; i < 8; i++){
-                  device_id |= ((uint64_t)cmd_data[1+i] << (i * 8));
-                }
-                DEVICE_ID = device_id;
-
-                uint32_t id_high = (uint32_t)(device_id>>32);
-                uint32_t id_low = (uint32_t)(device_id & 0xFFFFFFFFUL);
-                printf("ID del dispositivo settato a %08lX%08lX\r\n", id_high, id_low);
-
-                } else { /* Handle invalid ID */ }
-            break;
-
-         case SPI_CMD_ENABLE_ANCHOR:
-             if (cmd_len > 1) {
-                int id = cmd_data[1];
-                if (id >= 0 && id < MAX_RESPONDERS) {
-                     anchor_enabled[id] = true;
-                 } else { /* Handle invalid ID */ }
-             }
-             break;
-
-         case SPI_CMD_DISABLE_ANCHOR:
-              if (cmd_len > 1) {
-                int id = cmd_data[1];
-                if (id >= 0 && id < MAX_RESPONDERS) {
-                    anchor_enabled[id] = false;
-                } else { /* Handle invalid ID */ }
-             }
-             break;
-        
-        case SPI_CMD_ENTER_CONFIG_MODE:
-          if(!in_config_mode){
-            in_config_mode = true;
-            init_config_arrays();
-            printf("Entrato in modalità configurazione \r\n");
-          }
-        
-        case SPI_CMD_EXIT_CONFIG_MODE:
-          if (in_config_mode) {
-            apply_config_changes();
-            in_config_mode = false;
-            printf("Uscito dalla modalità configurazione\r\n");
-          }
-        
-        case SPI_CMD_SET_NUM_DEVICES:
-          if (in_config_mode && cmd_len > 1) {
-            uint8_t num = cmd_data[1];
-            if (num < MAX_RESPONDERS) {
-              config_num_devices = num;
-              printf("Numero di dispositivi settato a: %d\r\n", config_num_devices);
-            }
-          } else if (!in_config_mode) {
-            printf("Comando ignorato, dispositivo non in config mode\r\n");
-          }
-          break;
-
-        case SPI_CMD_SET_DEVICE_ID_AT:
-          if (in_config_mode && cmd_len >= 10) // comando + 1 byte index array + 8 byte id
-          {
-            uint8_t idx = cmd_data[1];
-            if(idx < MAX_RESPONDERS){
-              uint64_t device_id = 0;
-
-              // Costruisco id a 64 bit a partire da 8 byte
-              for(int i = 0; i<8; i++){
-                device_id |= ((uint64_t)cmd_data[2+i] << (i * 8));
-              }
-
-              config_anchor_ids[idx] = device_id;
-              config_anchor_enabled[idx] = true;
-
-              uint32_t id_high = (uint32_t)(device_id>>32);
-              uint32_t id_low = (uint32_t)(device_id & 0xFFFFFFFFUL);
-              printf("ID all'indice %d settato a %08lX%08lX\r\n", idx, id_high, id_low);
-            }
-          } else if (!in_config_mode){
-            printf("Dispositivo non in config mode\r\n");
-          }
-          else {
-            printf("Formato del comando non valido\r\n");
-          }
-          break;
-        
-        case SPI_CMD_MEASURE_DISTANCE:
-          if(cmd_len>=10) { // Comando + 8 byte id + numero misurazioni
-
-            // Passo a modalità Initiator, se non lo è già
-            if(device_mode!=DEVICE_MODE_INITIATOR){
-                device_mode = DEVICE_MODE_INITIATOR;
-                // Applica le configurazioni hardware per l'initiator
-                dwt_setrxtimeout(65000);
-                dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
-            }
-            
-            // Estraggo id target
-            uint64_t target_id = 0;
-            for(int i=0; i<8; i++){
-              target_id |= ((uint64_t)cmd_data[1+i] << (i*8));
-            }
-
-            uint8_t num_samples = cmd_data[9];
-            if(num_samples>50) num_samples=50; // massimo 50
-             
-            uint32_t id_high = (uint32_t)(target_id>>32);
-            uint32_t id_low = (uint32_t)(target_id & 0xFFFFFFFFUL);
-            printf("inizio misurazioni verso dispositivo %08lX%08lX\r\n", id_high, id_low);
-
-            performing_avg_measurement = true;
-            
-            // effettuo misurazioni
-            current_avg_measurement = perform_average_measurement(target_id, num_samples);
-
-            performing_avg_measurement = false;
-
-            // Ritorno a responder
-            device_mode = DEVICE_MODE_RESPONDER;
-            // Applica le configurazioni hardware per il responder
-            dwt_setrxtimeout(0);
-            dwt_rxreset(); // Resetta la ricezione
-          }
-          break;
-
-        case SPI_CMD_MEASURE_ALL_DISTANCES:
-          // Passo a modalità Initiator, se non lo è già
-            if(device_mode!=DEVICE_MODE_INITIATOR){
-                device_mode = DEVICE_MODE_INITIATOR;
-                // Applica le configurazioni hardware per l'initiator
-                dwt_setrxtimeout(65000);
-                dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
-            }
-
-            measure_all_distances(10);
-
-            // Ritorno a responder
-            device_mode = DEVICE_MODE_RESPONDER;
-            // Applica le configurazioni hardware per il responder
-            dwt_setrxtimeout(0);
-            dwt_rxreset(); // Resetta la ricezione
-            break;
-
-        case SPI_CMD_GET_INFO:
-             // Action is to prepare response
-             break;
-
-        case SPI_CMD_GET_HELP:
-             // Action is to prepare response
-             break;
-        
-        case SPI_SET_NLOS_MODE:
-            // imposto la modalità a NLoS
-            nlos_mode = true;
-            dwt_configure(&nlos_config);
-            break;
-        
-        case SPI_SET_LOS_MODE:
-            // imposto modalità a LoS
-            nlos_mode=false;
-            dwt_configure(&config);
-            break;
-        
-        case SPI_SET_ANTENNA_RX_DELAY:
-            if(cmd_len>=3){ // comando + 2 byte delay
-                uint16_t delay = cmd_data[1] | (cmd_data[2]<<8);
-                RECEIVER_DELAY = delay;
-                dwt_setrxantennadelay(RECEIVER_DELAY);
-                printf("Antenna receiver delay set to: %u\r\n", RECEIVER_DELAY);
-            } else {
-                printf("Command for rx delay setting received, but content is not valid!\r\n");
-            }
-            break;
-
-        case SPI_SET_ANTENNA_TX_DELAY:
-            if(cmd_len>=3){
-                uint16_t delay = cmd_data[1] | (cmd_data[2]<<8);
-                TRANSMITTER_DELAY = delay;
-                dwt_settxantennadelay(TRANSMITTER_DELAY);
-                printf("Antenna transmitter delay set to: %u\r\n", TRANSMITTER_DELAY);
-            } else {
-                printf("Command for tx delay setting received, but content is not valid!\r\n");
-            }
-
-            break;
-
-        default:
-            // Unknown command - prepare_spi_response will handle this
-             break;
+    // Gestisco comandi informativi, quali SPI_CMD_GET_STATUS o SPI_CMD_GET_INFO
+    if (command == SPI_CMD_GET_STATUS || command == SPI_CMD_GET_INFO) {
+        return; // gestiti in prepare_spi_response()
     }
+
+    // Gestisco poi gli altri comandi in base allo stato del dispositivo
+    switch(current_state){
+        case STATE_IDLE: // eseguo comandi 
+            
+            switch (command)
+            {
+                case SPI_CMD_SET_MODE_INIT:
+                    if (device_mode != DEVICE_MODE_INITIATOR) {
+                        device_mode = DEVICE_MODE_INITIATOR;
+                        bool_mode_changed = true; // Signal UWB logic in main loop
+                        printf("Cambiamento modalità a Iniziatore!\r\n");
+                    }
+                    break;
+
+                case SPI_CMD_SET_MODE_RESP:
+                     if (device_mode != DEVICE_MODE_RESPONDER) {
+                        device_mode = DEVICE_MODE_RESPONDER;
+                        bool_mode_changed = true; // Signal UWB logic
+                        printf("Cambiamento modalità a Responder!\r\n");
+                    }
+                    break;
+
+                case SPI_CMD_SET_ID:
+                    if (cmd_len >= 9) { // comando + 8 byte dispositivo
+                        uint64_t device_id = 0;
+                        // Costruisco a partire dagli 8 byte ricevuti
+                        for (int i = 0; i < 8; i++){
+                          device_id |= ((uint64_t)cmd_data[1+i] << (i * 8));
+                        }
+                        DEVICE_ID = device_id;
+
+                        uint32_t id_high = (uint32_t)(device_id>>32);
+                        uint32_t id_low = (uint32_t)(device_id & 0xFFFFFFFFUL);
+                        printf("ID del dispositivo settato a %08lX%08lX\r\n", id_high, id_low);
+
+                        } else { /* Handle invalid ID */ }
+                    break;
+
+                 case SPI_CMD_ENABLE_ANCHOR:
+                     if (cmd_len > 1) {
+                        int id = cmd_data[1];
+                        if (id >= 0 && id < MAX_RESPONDERS) {
+                             anchor_enabled[id] = true;
+                         } else { /* Handle invalid ID */ }
+                     }
+                     break;
+
+                 case SPI_CMD_DISABLE_ANCHOR:
+                      if (cmd_len > 1) {
+                        int id = cmd_data[1];
+                        if (id >= 0 && id < MAX_RESPONDERS) {
+                            anchor_enabled[id] = false;
+                        } else { /* Handle invalid ID */ }
+                     }
+                     break;
+                  case SPI_CMD_ENTER_CONFIG_MODE:
+                      if(!in_config_mode){
+                        in_config_mode = true;
+                        init_config_arrays();
+                        printf("Entrato in modalità configurazione \r\n");
+                      }
+        
+                    case SPI_CMD_EXIT_CONFIG_MODE:
+                      if (in_config_mode) {
+                        apply_config_changes();
+                        in_config_mode = false;
+                        printf("Uscito dalla modalità configurazione\r\n");
+                      }
+        
+                    case SPI_CMD_SET_NUM_DEVICES:
+                      if (in_config_mode && cmd_len > 1) {
+                        uint8_t num = cmd_data[1];
+                        if (num < MAX_RESPONDERS) {
+                          config_num_devices = num;
+                          printf("Numero di dispositivi settato a: %d\r\n", config_num_devices);
+                        }
+                      } else if (!in_config_mode) {
+                        printf("Comando ignorato, dispositivo non in config mode\r\n");
+                      }
+                      break;
+
+                    case SPI_CMD_SET_DEVICE_ID_AT:
+                      if (in_config_mode && cmd_len >= 10) // comando + 1 byte index array + 8 byte id
+                      {
+                        uint8_t idx = cmd_data[1];
+                        if(idx < MAX_RESPONDERS){
+                          uint64_t device_id = 0;
+
+                          // Costruisco id a 64 bit a partire da 8 byte
+                          for(int i = 0; i<8; i++){
+                            device_id |= ((uint64_t)cmd_data[2+i] << (i * 8));
+                          }
+
+                          config_anchor_ids[idx] = device_id;
+                          config_anchor_enabled[idx] = true;
+
+                          uint32_t id_high = (uint32_t)(device_id>>32);
+                          uint32_t id_low = (uint32_t)(device_id & 0xFFFFFFFFUL);
+                          printf("ID all'indice %d settato a %08lX%08lX\r\n", idx, id_high, id_low);
+                        }
+                      } else if (!in_config_mode){
+                        printf("Dispositivo non in config mode\r\n");
+                      }
+                      else {
+                        printf("Formato del comando non valido\r\n");
+                      }
+                      break;
+        
+                    case SPI_CMD_MEASURE_DISTANCE:
+                      if(cmd_len>=10) { // Comando + 8 byte id + numero misurazioni
+
+                        // Passo a modalità Initiator, se non lo è già
+                        if(device_mode!=DEVICE_MODE_INITIATOR){
+                            device_mode = DEVICE_MODE_INITIATOR;
+                            // Applica le configurazioni hardware per l'initiator
+                            dwt_setrxtimeout(65000);
+                            dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
+                        }
+            
+                        // Estraggo id target
+                        uint64_t target_id = 0;
+                        for(int i=0; i<8; i++){
+                          target_id |= ((uint64_t)cmd_data[1+i] << (i*8));
+                        }
+
+                        uint8_t num_samples = cmd_data[9];
+                        if(num_samples>50) num_samples=50; // massimo 50
+             
+                        uint32_t id_high = (uint32_t)(target_id>>32);
+                        uint32_t id_low = (uint32_t)(target_id & 0xFFFFFFFFUL);
+                        printf("inizio misurazioni verso dispositivo %08lX%08lX\r\n", id_high, id_low);
+
+                        performing_avg_measurement = true;
+            
+                        // effettuo misurazioni
+                        current_avg_measurement = perform_average_measurement(target_id, num_samples);
+
+                        performing_avg_measurement = false;
+
+                        // Ritorno a responder
+                        device_mode = DEVICE_MODE_RESPONDER;
+                        // Applica le configurazioni hardware per il responder
+                        dwt_setrxtimeout(0);
+                        dwt_rxreset(); // Resetta la ricezione
+                      }
+                      current_state = STATE_PROCESSING;
+                      break;
+
+                    case SPI_CMD_MEASURE_ALL_DISTANCES:
+                      // Passo a modalità Initiator, se non lo è già
+                        if(device_mode!=DEVICE_MODE_INITIATOR){
+                            device_mode = DEVICE_MODE_INITIATOR;
+                            // Applica le configurazioni hardware per l'initiator
+                            dwt_setrxtimeout(65000);
+                            dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
+                        }
+
+                        measure_all_distances(10);
+
+                        // Ritorno a responder
+                        device_mode = DEVICE_MODE_RESPONDER;
+                        // Applica le configurazioni hardware per il responder
+                        dwt_setrxtimeout(0);
+                        dwt_rxreset(); // Resetta la ricezione
+                        current_state = STATE_PROCESSING;
+                        break;
+
+                    case SPI_CMD_GET_INFO:
+                         // Action is to prepare response
+                         break;
+
+                    case SPI_CMD_GET_HELP:
+                         // Action is to prepare response
+                         break;
+        
+                    case SPI_SET_NLOS_MODE:
+                        // imposto la modalità a NLoS
+                        nlos_mode = true;
+                        dwt_configure(&nlos_config);
+                        break;
+        
+                    case SPI_SET_LOS_MODE:
+                        // imposto modalità a LoS
+                        nlos_mode=false;
+                        dwt_configure(&config);
+                        break;
+        
+                    case SPI_SET_ANTENNA_RX_DELAY:
+                        if(cmd_len>=3){ // comando + 2 byte delay
+                            uint16_t delay = cmd_data[1] | (cmd_data[2]<<8);
+                            RECEIVER_DELAY = delay;
+                            dwt_setrxantennadelay(RECEIVER_DELAY);
+                            printf("Antenna receiver delay set to: %u\r\n", RECEIVER_DELAY);
+                        } else {
+                            printf("Command for rx delay setting received, but content is not valid!\r\n");
+                        }
+                        break;
+
+                    case SPI_SET_ANTENNA_TX_DELAY:
+                        if(cmd_len>=3){
+                            uint16_t delay = cmd_data[1] | (cmd_data[2]<<8);
+                            TRANSMITTER_DELAY = delay;
+                            dwt_settxantennadelay(TRANSMITTER_DELAY);
+                            printf("Antenna transmitter delay set to: %u\r\n", TRANSMITTER_DELAY);
+                        } else {
+                            printf("Command for tx delay setting received, but content is not valid!\r\n");
+                        }
+
+                        break;
+
+                    default:
+                        // Unknown command - prepare_spi_response will handle this
+                         break;
+          
+            }
+            break;
+        case STATE_PROCESSING: // il dispositivo sta processando un comando, e gestisce solo i comandi informativi
+            printf("Comando 0x%02X ignorato: dispositivo occupato. \r\n");
+            break;
+        
+        case STATE_DATA_READY: // con i dati pronti, si accettano solo comandi per leggerli
+            
+            switch (command) {
+                case SPI_CMD_READ_RESULTS:
+                    // dopo la lettura, torna in idle
+                    current_state = STATE_IDLE;
+                    break;
+                default:
+                    printf("Comando 0x%02X ignorato: in attesa di lettura risultati vecchia operazione. \r\n");
+                    break;
+            }
+
+            break;
+        case STATE_ERROR:
+            // da gestire
+            break;
+    
+    }
+
+
 }
 
 /*
@@ -1367,39 +1416,58 @@ static void spi_slave_init(void)
 
     // Controllo la ricezione di comandi SPI
 
-
+    //printf("Ricomincio il loop!\r\n");
     nrf_delay_ms(200);
-        //printf("Inizio raccolta dati SPI\r\n");
-        if (new_spi_command_received) {
-            printf("SPI CMD Received: 0x%02X (len %d)\r\n", spi_cmd_buffer[0], spi_cmd_length);
-            uint8_t local_cmd_buf[SPI_CMD_BUFFER_SIZE];
-            uint8_t local_cmd_len = 0;
+    //printf("Inizio raccolta dati SPI\r\n");
+    if (new_spi_command_received) {
+        printf("SPI CMD Received: 0x%02X (len %d)\r\n", spi_cmd_buffer[0], spi_cmd_length);
+        uint8_t local_cmd_buf[SPI_CMD_BUFFER_SIZE];
+        uint8_t local_cmd_len = 0;
 
-            // Abilita sezione critica per evitare race conditions
-            CRITICAL_REGION_ENTER(); // Disabilita interrupts
-            if (new_spi_command_received) // controllo di nuovo se ci sono comandi
-            {
-                local_cmd_len = spi_cmd_length; // salvo lunghezza
-                memcpy(local_cmd_buf, spi_cmd_buffer, local_cmd_len); // lo salvo in un buffer locale
-                new_spi_command_received = false; // pulisco la flag
-                spi_cmd_length = 0;
-            }
-             CRITICAL_REGION_EXIT(); // riabilita interrupts
-             //  chiudi sezione critica
-
-            if (local_cmd_len > 0) {
-                 printf("Processing SPI CMD: 0x%02X (len %d)\r\n", local_cmd_buf[0], local_cmd_len);
-                 //NRF_LOG_FLUSH();
-                 current_spi_command = local_cmd_buf[0]; // Store command code
-                 process_spi_command(local_cmd_buf, local_cmd_len);
-
-                 // Prepare the response buffer for the *next* transaction
-                 prepare_spi_response(current_spi_command);
-                 printf("SPI Response prepared.\r\n");
-                 //NRF_LOG_FLUSH();
-            }
+        // Abilita sezione critica per evitare race conditions
+        CRITICAL_REGION_ENTER(); // Disabilita interrupts
+        if (new_spi_command_received) // controllo di nuovo se ci sono comandi
+        {
+            local_cmd_len = spi_cmd_length; // salvo lunghezza
+            memcpy(local_cmd_buf, spi_cmd_buffer, local_cmd_len); // lo salvo in un buffer locale
+            new_spi_command_received = false; // pulisco la flag
+            spi_cmd_length = 0;
         }
+         CRITICAL_REGION_EXIT(); // riabilita interrupts
+         //  chiudi sezione critica
+
+        if (local_cmd_len > 0) {
+             printf("Processing SPI CMD: 0x%02X (len %d)\r\n", local_cmd_buf[0], local_cmd_len);
+             //NRF_LOG_FLUSH();
+             current_spi_command = local_cmd_buf[0]; // Store command code
+             process_spi_command(local_cmd_buf, local_cmd_len);
+
+             // Prepare the response buffer for the *next* transaction
+             prepare_spi_response(current_spi_command);
+             printf("SPI Response prepared.\r\n");
+             //NRF_LOG_FLUSH();
+        }
+    }
+
+    // Controllo lo stato attuale della FSM in cui si trova il dispositivo, e sulla base di quello eseguo azioni
+    switch (current_state) {
+        case STATE_IDLE:
+            // Se sono in modalità responder, ascolto in UWB
+            if (device_mode == DEVICE_MODE_RESPONDER) {
+                ss_resp_run(DEVICE_ID);
+            }
+            // Altrimenti attendo comandi SPI
+            break;
+        case STATE_PROCESSING:
+            break;
+        case STATE_DATA_READY:
+            break;
+        case STATE_ERROR:
+            break;
+    }
         
+          
+          #if 0
           // --- 2. Handle UWB Mode Switching ---
           //printf("Gestisco cambio di modalità\r\n");
           if (bool_mode_changed) {
@@ -1425,6 +1493,7 @@ static void spi_slave_init(void)
             bool_mode_changed = false; // Reset the flag
             //NRF_LOG_FLUSH();
           }
+          #endif
           
           if(!in_config_mode) { //&& device_mode == DEVICE_MODE_RESPONDER){
           #if 0
@@ -1457,14 +1526,19 @@ static void spi_slave_init(void)
                 // Add a small delay if ss_resp_run returns immediately without receiving
                 nrf_delay_ms(10); // Small delay to prevent busy-waiting if no poll received
           }
-          #endif
+          
           if(device_mode==DEVICE_MODE_RESPONDER && !performing_avg_measurement) {
               // dispositivo in ascolto
               ss_resp_run(DEVICE_ID);
 
+          } else if (device_mode==DEVICE_MODE_INITIATOR) {
+              ss_init_run(1);
+              nrf_delay_ms(10);
+          
           } else {
               nrf_delay_ms(10); // busy wait
           }
+          #endif
 
         }
         

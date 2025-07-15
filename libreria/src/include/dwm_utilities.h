@@ -11,6 +11,11 @@
 #include <linux/spi/spidev.h>
 #include <stddef.h>
 
+extern int spi_fd;
+extern uint8_t spi_mode;
+extern uint8_t spi_bits;
+extern uint32_t spi_speed;
+
 /**
  * @brief Esegue una transazione SPI (invio e ricezione simultanei). 
  *
@@ -59,7 +64,7 @@ typedef struct
  * @param r_std Deviazione standard del rumore di osservazione.
  * @param q_std Deviazione standard del rumore di processo.
  */
-void kalman_init(KalmanFilter *kf, double distanza_iniziale, double r_std, double q_std);
+//void kalman_init(KalmanFilter *kf, double distanza_iniziale, double r_std, double q_std);
 
 /**
  * @brief Aggiorna il filtro di Kalman con una nuova misura della distanza.
@@ -70,6 +75,6 @@ void kalman_init(KalmanFilter *kf, double distanza_iniziale, double r_std, doubl
  * 
  * @return Nuova distanza stimata dal filtro di Kalman.
  */
-double kalman_update(KalmanFilter *kf, double distanza_misurata, double r_std, double q_std);
+//double kalman_update(KalmanFilter *kf, double distanza_misurata, double r_std, double q_std);
 
 #endif // DWM_UTILITIES_H

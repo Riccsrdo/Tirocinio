@@ -1,11 +1,11 @@
 #include "dwm_master.h"
-#include "dwm_utilities.h"
+#include "include/dwm_utilities.h"
 
 // Variabili statiche per la gestione del device SPI
-static int spi_fd = -1; // File descriptor per il device SPI
-//static uint8_t spi_mode = 2; // Modalità di connessione SPI
-//static uint8_t spi_bits = 8; // Bits in trasferimento
-//static uint32_t spi_speed = 2000000; // Default 2 MHz
+ int spi_fd = -1; // File descriptor per il device SPI
+ uint8_t spi_mode = 2; // Modalità di connessione SPI
+ uint8_t spi_bits = 8; // Bits in trasferimento
+ uint32_t spi_speed = 2000000; // Default 2 MHz
 
 // Funzione interna per gestire errori
 static void print_spi_error(const char* action) {

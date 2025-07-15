@@ -12,12 +12,12 @@ if(DEBUG_FLAG)
 endif()
 
 # --- Definizione della libreria ---
-add_library(dwm_master src/dwm_master.c src/dwm_utilities.c)
-
 if(BUILD_SHARED)
-    set_target_properties(dwm_master PROPERTIES TYPE SHARED)
+    # Crea la libreria direttamente come SHARED
+    add_library(dwm_master SHARED src/dwm_master.c src/dwm_utilities.c)
 else()
-    set_target_properties(dwm_master PROPERTIES TYPE STATIC)
+    # Crea la libreria direttamente come STATIC
+    add_library(dwm_master STATIC src/dwm_master.c src/dwm_utilities.c)
 endif()
 
 set_target_properties(dwm_master PROPERTIES OUTPUT_NAME DWM_Master)
