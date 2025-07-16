@@ -13,7 +13,7 @@
 
 #define SPI_DEVICE "/dev/spidev0.0"
 #define SPI_SPEED 2000000 // 2 MHz
-#define SPI_MODE 2
+#define SPI_MODE 0
 #define SPI_BITS 8
 
 

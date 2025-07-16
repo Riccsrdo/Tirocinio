@@ -3,7 +3,7 @@
 
 // Variabili statiche per la gestione del device SPI
  int spi_fd = -1; // File descriptor per il device SPI
- uint8_t spi_mode = 2; // Modalità di connessione SPI
+ uint8_t spi_mode = 0; // Modalità di connessione SPI
  uint8_t spi_bits = 8; // Bits in trasferimento
  uint32_t spi_speed = 2000000; // Default 2 MHz
 

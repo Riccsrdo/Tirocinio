@@ -140,7 +140,7 @@
  #define MAX_RESPONDERS 16 // da aggiornare anche su ss_init_main.c in caso di cambiamento
  #endif
  
- volatile device_mode_t device_mode = DEVICE_MODE_RESPONDER; /* Imposto modalitÃ  iniziale come iniziatore */
+ volatile device_mode_t device_mode = DEVICE_MODE_INITIATOR; /* Imposto modalitÃ  iniziale come iniziatore */
  volatile bool bool_mode_changed = false;                         /* Flag booleana per inidicare che la modalitÃ  Ã¨ cambiata */
  
  /* Impostazioni modalitÃ  multi-risponditore
@@ -148,7 +148,7 @@
 
  volatile uint64_t anchor_ids[MAX_RESPONDERS] = {0, 1, 2, 3, 4, 5, 6, 7, 8,
                                                            9, 10, 11, 12, 13, 14, 15}; /* ID dei risponditori */
- volatile uint64_t DEVICE_ID = 1; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
+ volatile uint64_t DEVICE_ID = 0; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
  volatile bool anchor_enabled[MAX_RESPONDERS] = {true, true, false, false, false, false, false, false,
                                                         false, false, false, false, false, false, false, false}; /* Abilitazione dei risponditori */
 
@@ -190,6 +190,7 @@
 
  #define SPI_CMD_GET_STATUS 0x02 // permette di ottenere lo stato della FSM in cui si trova il dispositivo
  #define SPI_CMD_READ_RESULTS 0x03 // master richiede risultati pronti
+ #define SPI_CMD_ECHO_TEST     0x04 // Comando di test per l'echo
   
  #define SPI_CMD_SET_MODE_INIT 0x10 // Permette di settare il dispositivo come iniziatore e misurare le distanze dagli
  // altri dispositivi
@@ -662,7 +663,8 @@ ricevuto dal master.
 */
 static void prepare_spi_response(uint8_t command_processed){
   switch (command_processed)
-    {
+    {   case SPI_CMD_ECHO_TEST:
+            break;
         case SPI_CMD_GET_DISTANCES:
         case SPI_CMD_SET_MODE_INIT:
         case SPI_CMD_SET_MODE_RESP:
@@ -922,7 +924,23 @@ static void process_spi_command(uint8_t *cmd_data, uint8_t cmd_len)
         case STATE_IDLE: // eseguo comandi 
             
             switch (command)
-            {
+            {   
+                case SPI_CMD_ECHO_TEST:
+                    // Prepara i dati ricevuti per essere rispediti al mittente.
+                    // cmd_data[0] è il comando, il payload inizia da cmd_data[1].
+                    if (cmd_len > 1) {
+                        uint8_t payload_len = cmd_len - 1;
+                        // Copia il payload nel buffer di trasmissione per il prossimo ciclo
+                        memcpy(m_spi_tx_buf, &cmd_data[1], payload_len);
+                        // Pulisce il resto del buffer di trasmissione
+                        memset(&m_spi_tx_buf[payload_len], 0, SPI_TX_DATA_BUFFER_SIZE - payload_len);
+                    } else {
+                        // Se non c'è payload, pulisce l'intero buffer
+                        memset(m_spi_tx_buf, 0, SPI_TX_DATA_BUFFER_SIZE);
+                    }
+                    printf("Echo command received. Preparing %d bytes for response.\r\n", cmd_len > 1 ? cmd_len - 1 : 0);
+                    break;
+
                 case SPI_CMD_SET_MODE_INIT:
                     if (device_mode != DEVICE_MODE_INITIATOR) {
                         device_mode = DEVICE_MODE_INITIATOR;
@@ -1165,6 +1183,12 @@ Funzione che gestisce eventi SPI con interrupt.
 static void spis_event_handler(nrf_drv_spis_event_t event)
 {
     printf("SPI HANDLER TRIGGERED! RX bytes: %d\r\n", event.rx_amount);
+    LEDS_INVERT(BSP_LED_0_MASK);
+    LEDS_INVERT(BSP_LED_1_MASK);
+    LEDS_INVERT(BSP_LED_2_MASK);
+    LEDS_INVERT(BSP_LED_0_MASK);
+    LEDS_INVERT(BSP_LED_1_MASK);
+    LEDS_INVERT(BSP_LED_2_MASK);
 
     if (event.evt_type == NRF_DRV_SPIS_XFER_DONE)
     {   
@@ -1214,23 +1238,21 @@ Funzione che inizializza dispositivo come slave SPI
 */
 static void spi_slave_init(void)
 {   
-    nrf_gpio_cfg_output(7);
-  nrf_gpio_pin_write(7, 0);
     memset(m_spi_tx_buf, 0xAA, SPI_TX_DATA_BUFFER_SIZE); // Inizializza con pattern alternato
-    nrf_gpio_cfg_output(MY_SPIS_MISO_PIN);
     nrf_drv_spis_config_t spis_config = NRF_DRV_SPIS_DEFAULT_CONFIG;
     spis_config.csn_pin   = 3; //MY_SPIS_CSN_PIN;
+    spis_config.csn_pullup = NRF_GPIO_PIN_PULLUP;
     spis_config.miso_pin  = 7; //MY_SPIS_MISO_PIN;
     spis_config.mosi_pin  = 6; // MY_SPIS_MOSI_PIN;
     spis_config.sck_pin   = 4; // MY_SPIS_SCK_PIN;
-    spis_config.mode      = NRF_DRV_SPIS_MODE_2;
+    spis_config.mode      = NRF_DRV_SPIS_MODE_1;
     spis_config.bit_order = NRF_DRV_SPIS_BIT_ORDER_MSB_FIRST;
     spis_config.irq_priority = APP_IRQ_PRIORITY_LOW;
 
     APP_ERROR_CHECK(nrf_drv_spis_init(&m_spis, &spis_config, spis_event_handler));
 
     // Prepare the buffer for transmission
-    prepare_distance_data_for_spi();
+    //prepare_distance_data_for_spi();
 
     // Initialize buffers for transmissions
     APP_ERROR_CHECK(nrf_drv_spis_buffers_set(&m_spis, m_spi_tx_buf, SPI_TX_DATA_BUFFER_SIZE, m_spi_rx_buf, SPI_CMD_BUFFER_SIZE));
@@ -1254,7 +1276,7 @@ static void spi_slave_init(void)
 
    /* Setup some LEDs for debug Green and Blue on DWM1001-DEV */
     LEDS_CONFIGURE(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK);
-    LEDS_ON(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK );
+    //LEDS_ON(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK );
 
   #ifdef USE_FREERTOS
     /* Create task for LED0 blinking with priority set to 2 */
@@ -1399,6 +1421,47 @@ static void spi_slave_init(void)
   */
   
 
+  LEDS_INVERT(BSP_LED_0_MASK);
+    LEDS_INVERT(BSP_LED_1_MASK);
+    LEDS_INVERT(BSP_LED_2_MASK);
+
+
+  while(true){ // DA RIMUOVERE
+      // === INIZIO SEZIONE DI TEST ===
+    // Commenta temporaneamente tutta la logica UWB e la macchina a stati
+    // per isolare e testare solo la comunicazione SPI.
+
+    if (new_spi_command_received) {
+        printf("SPI CMD Received: 0x%02X (len %d)\r\n", spi_cmd_buffer[0], spi_cmd_length);
+        uint8_t local_cmd_buf[SPI_CMD_BUFFER_SIZE];
+        uint8_t local_cmd_len = 0;
+
+        CRITICAL_REGION_ENTER();
+        if (new_spi_command_received)
+        {
+            local_cmd_len = spi_cmd_length;
+            memcpy(local_cmd_buf, spi_cmd_buffer, local_cmd_len);
+            new_spi_command_received = false;
+            spi_cmd_length = 0;
+        }
+        CRITICAL_REGION_EXIT();
+
+        if (local_cmd_len > 0) {
+             printf("Processing SPI CMD: 0x%02X (len %d)\r\n", local_cmd_buf[0], local_cmd_len);
+             process_spi_command(local_cmd_buf, local_cmd_len);
+             // Non c'è bisogno di chiamare prepare_spi_response qui
+             // perché la logica di echo la gestisce già.
+             printf("SPI Response prepared for next transaction.\r\n");
+        }
+    } else {
+        //printf("Nessun comando ricevuto\r\n");
+    }
+
+    // Aggiungi un piccolo ritardo per non saturare la CPU
+    //nrf_delay_ms(500);
+  }
+  
+
   while (true)
   {  
   #if 1
@@ -1420,6 +1483,11 @@ static void spi_slave_init(void)
     nrf_delay_ms(200);
     //printf("Inizio raccolta dati SPI\r\n");
     if (new_spi_command_received) {
+      
+        LEDS_INVERT(BSP_LED_1_MASK);
+        LEDS_INVERT(BSP_LED_2_MASK);
+        LEDS_INVERT(BSP_LED_1_MASK);
+        LEDS_INVERT(BSP_LED_2_MASK);
         printf("SPI CMD Received: 0x%02X (len %d)\r\n", spi_cmd_buffer[0], spi_cmd_length);
         uint8_t local_cmd_buf[SPI_CMD_BUFFER_SIZE];
         uint8_t local_cmd_len = 0;
@@ -1455,6 +1523,8 @@ static void spi_slave_init(void)
             // Se sono in modalità responder, ascolto in UWB
             if (device_mode == DEVICE_MODE_RESPONDER) {
                 ss_resp_run(DEVICE_ID);
+            } else if (device_mode == DEVICE_MODE_INITIATOR){
+                //ss_init_run(1);
             }
             // Altrimenti attendo comandi SPI
             break;
