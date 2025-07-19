@@ -45,6 +45,7 @@
  #include "math.h"
  #include "sys/time.h"
  //#include "UART.h"
+ #include "nrf_drv_uart.h" // Funzioni di utilità e gestione UART
  
  /* Dichiaro in precedenza le funzioni che dovrÃ² usare successivamente */
  extern int ss_init_run(uint64_t anchor_id);           // Funzione per utilizzo come iniziatore comunicazione
@@ -247,241 +248,62 @@
 
  /*------------------------------fine-------------------------------*/
 
- #endif
+
+
+
+
+ /*------------------------------UART-------------------------------*/
+
+  #define UART_RX_PIN 11 // Pin nRF52832 per gestione ricezione UART
+  #define UART_TX_PIN 5 // Pin nRF52832 per gestione trasmissione UART
+
+  /*
+  Struttura pacchetto UART:
+
+  - 1: Byte di partenza del pacchetto, indicato da 0xAA
+  - 2: Id del comando, valore in esadecimale che indica comando
+  - 3: Lunghezza del payload: due byte che indicano la lunghezza dei dati successivi
+  - 4: Payload, contenuto effettivo inviato
+  - 5: Checksum, controllo degli errori
+
+  */
+
+  #define START_BYTE 0xAA
+  #define MAX_PAYLOAD_SIZE 512
+  #define PACKET_BUFFER_SIZE (MAX_PAYLOAD_SIZE + 5) // Con 5 si intendono i 5 byte extra (1 inizio, 1 cmd, 2 lunghezza, 1 checksum)
+  
+  static char uart_packet_buffer[PACKET_BUFFER_SIZE]; 
+  static uint16_t uart_packet_index = 0;
+  static uint16_t uart_payload_len = 0;
+  static volatile bool uart_new_command = false;
+
+  // FSM per UART
+  typedef enum {
+      STATE_WAIT_FOR_START,
+      STATE_RECEIVE_CMD,
+      STATE_RECEIVE_LEN_LSB,
+      STATE_RECEIVE_LEN_MSB,
+      STATE_RECEIVE_PAYLOAD,
+      STATE_RECEIVE_CHECKSUM
+  } uart_rx_state_t;
+
+  static uart_rx_state_t uart_state = STATE_WAIT_FOR_START; // parte in attesa di comandi
+
+  // Istanza driver uart
+  static const nrf_drv_uart_t m_uart = NRF_DRV_UART_INSTANCE(0);
+  static uint8_t m_uart_rx_byte: // byte ricezione
+
+  /*------------------------------fine-------------------------------*/
+
+
+
+
 
  /* Gestione del buffer di comandi provenienti da UART */
 //#define CMD_BUFFER_SIZE 32
 //static char cmd_buffer[CMD_BUFFER_SIZE];
 //static uint8_t cmd_buffer_index = 0;
  
- #ifdef USE_FREERTOS
- 
- TaskHandle_t ss_initiator_task_handle; /**< Reference to SS TWR Initiator FreeRTOS task. */
- TaskHandle_t led_toggle_task_handle;   /**< Reference to LED0 toggling FreeRTOS task. */
- TimerHandle_t led_toggle_timer_handle; /**< Reference to LED1 toggling FreeRTOS timer. */
- TaskHandle_t uart_task_handle;
- TaskHandle_t ss_main_task_handle;
- 
- /**@brief LED0 task entry function.
-  *
-  * @param[in] pvParameter   Pointer that will be used as the parameter for the task.
-  */
- static void led_toggle_task_function(void *pvParameter)
- {
-   UNUSED_PARAMETER(pvParameter);
-   while (true)
-   {
-     LEDS_INVERT(BSP_LED_0_MASK);
-     /* Delay a task for a given number of ticks */
-     vTaskDelay(TASK_DELAY);
-     /* Tasks must be implemented to never return... */
-   }
- }
- 
- /**@brief The function to call when the LED1 FreeRTOS timer expires.
-  *
-  * @param[in] pvParameter   Pointer that will be used as the parameter for the timer.
-  */
- static void led_toggle_timer_callback(void *pvParameter)
- {
-   UNUSED_PARAMETER(pvParameter);
-   LEDS_INVERT(BSP_LED_1_MASK);
- }
- 
- #endif
- 
- /* Funzione che gestisce i comandi di setting inviati via UART*/
-#if 0
-static void process_uart_command(char *cmd)
-{
-  /* Rimuovi spazi iniziali e finali */
-  char *start = cmd;
-  while (*start == ' ' || *start == '\t') start++;
-  
-  char *end = start + strlen(start) - 1;
-  while (end > start && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) {
-    *end = '\0';
-    end--;
-  }
-  
-  /* Se la stringa ï¿½ vuota, non fare nulla */
-  if (strlen(start) == 0) return;
-
-  if (strncmp(start, "INIT", 4) == 0 || strncmp(start, "init", 4) == 0)
-  {
-    // Setto il dispositivo come iniziatore della comunicazione
-    if (device_mode != DEVICE_MODE_INITIATOR)
-    {
-      device_mode = DEVICE_MODE_INITIATOR;
-      bool_mode_changed = true;
-      printf("Device set to INITIATOR mode\r\n");
-    }
-    else
-    {
-      printf("Already in INITIATOR mode\r\n");
-    }
-  }
-  else if (strncmp(start, "RESP", 4) == 0 || strncmp(start, "resp", 4) == 0)
-  {
-    // Setto il dispositivo come risponditore
-    if (device_mode != DEVICE_MODE_RESPONDER)
-    {
-      device_mode = DEVICE_MODE_RESPONDER;
-      bool_mode_changed = true;
-      printf("Device set to RESPONDER mode\r\n");
-    }
-    else
-    {
-      printf("Already in RESPONDER mode\r\n");
-    }
-  }
-  else if (strncmp(start, "INFO", 4) == 0 || strncmp(start, "info", 4) == 0)
-  {
-    printf("Device mode: %s\r\n", device_mode == DEVICE_MODE_INITIATOR ? "Initiator" : "Responder");
-    printf("Device ID: %d\r\n", DEVICE_ID);
-    printf("Enabled responders: ");
-    for (int i = 0; i < MAX_RESPONDERS; i++)
-    {
-      if (anchor_enabled[i])
-      {
-        printf("%d ", i);
-      }
-    }
-    printf("\r\n");
-  }
-  else if (strncmp(start, "SETID", 5) == 0 || strncmp(start, "setid", 5) == 0)
-  {
-    // Setto l'id del dispositivo
-    int id = 0;
-    if (sscanf(start + 5, "%d", &id) == 1 && id >= 0 && id < MAX_RESPONDERS)
-    {
-      DEVICE_ID = (uint8_t)id;
-      printf("Device ID set to: %d\r\n", DEVICE_ID);
-    }
-    else
-    {
-      printf("Invalid ID. Please specify a value between 0 and %d\r\n", MAX_RESPONDERS - 1);
-    }
-  }
-  else if (strncmp(start, "ENABLE", 6) == 0 || strncmp(start, "enable", 6) == 0)
-  {
-    // Abilita la comunicazione con un certo risponditore
-    int id = 0;
-    if (sscanf(start + 6, "%d", &id) == 1 && id >= 0 && id < MAX_RESPONDERS)
-    {
-      anchor_enabled[id] = true;
-      printf("Responder with ID %d enabled\r\n", id);
-    }
-    else
-    {
-      printf("Invalid ID. Please specify a value between 0 and %d\r\n", MAX_RESPONDERS - 1);
-    }
-  }
-  else if (strncmp(start, "DISABLE", 7) == 0 || strncmp(start, "disable", 7) == 0)
-  {
-    // Disabilita la comunicazione con un certo risponditore
-    int id = 0;
-    if (sscanf(start + 7, "%d", &id) == 1 && id >= 0 && id < MAX_RESPONDERS)
-    {
-      anchor_enabled[id] = false;
-      printf("Responder with ID %d disabled\r\n", id);
-    }
-    else
-    {
-      printf("Invalid ID. Please specify a value between 0 and %d\r\n", MAX_RESPONDERS - 1);
-    }
-  }
-  else if (strncmp(start, "HELP", 4) == 0 || strncmp(start, "help", 4) == 0)
-  {
-    printf("Available commands:\r\n");
-    printf("  INIT - Switch to initiator mode\r\n");
-    printf("  RESP - Switch to responder mode\r\n");
-    printf("  INFO - Show current device settings\r\n");
-    printf("  SETID <n> - Set device ID (0-%d)\r\n", MAX_RESPONDERS - 1);
-    printf("  ENABLE <n> - Enable responder with ID n\r\n");
-    printf("  DISABLE <n> - Disable responder with ID n\r\n");
-    printf("  HELP - Show this help message\r\n");
-  }
-  else
-  {
-    printf("Unknown command: %s\r\n", start);
-    printf("Type HELP for available commands\r\n");
-  }
-}
-
-static void uart_task_function(void *pvParameter)
-{
-  UNUSED_PARAMETER(pvParameter);
-  
-  printf("\r\n\r\n--- UWB Ranging System ---\r\n");
-  printf("Send 'HELP' for command list\r\n");
-
-  while (true)
-  {
-    uint8_t data;
-    
-    /* Polling della UART */
-    if (boUART_getc(&data))
-    {
-      /* Gestione caratteri di controllo (terminatori di riga) */
-      if (data == '\r' || data == '\n')
-      {
-        if (cmd_buffer_index > 0)
-        {
-          /* Termina la stringa */
-          cmd_buffer[cmd_buffer_index] = '\0';
-          
-          /* Elabora il comando */
-          process_uart_command(cmd_buffer);
-          
-          /* Reset per il prossimo comando */
-          cmd_buffer_index = 0;
-        }
-      }
-      /* Gestione del backspace */
-      else if (data == 8 || data == 127) /* Backspace o Delete */
-      {
-        if (cmd_buffer_index > 0)
-        {
-          cmd_buffer_index--;
-          /* Echo del backspace */
-          printf("\b \b");
-        }
-      }
-      /* Accumula caratteri nel buffer */
-      else if (cmd_buffer_index < CMD_BUFFER_SIZE - 1)
-      {
-        cmd_buffer[cmd_buffer_index++] = data;
-        /* Echo del carattere */
-        printf("%c", data);
-      }
-    }
-    
-    /* Breve delay per non saturare la CPU */
-    vTaskDelay(10);
-  }
-}
-
- 
- /* Funzione che gestisce i vari settaggi effettuati via UART */
- void uart_event_handler(uint8_t data)
- {
-   if (data == '\r' || data == '\n')
-   {
-     if (cmd_buffer_index > 0)
-     {
-       cmd_buffer[cmd_buffer_index] = '\0';
-       // Process the command
-       process_uart_command((char*)cmd_buffer);
-       cmd_buffer_index = 0;
-     }
-   }
-   else if (cmd_buffer_index < CMD_BUFFER_SIZE - 1)
-   {
-     cmd_buffer[cmd_buffer_index++] = data;
-   }
- }
-#endif
 
 
  /* DWM1000 interrupt initialization and handler definition */
@@ -652,6 +474,118 @@ int compare_doubles(const void * a, const void * b){
 
 
 /*-------------------------------------fine------------------------------------*/
+
+
+
+
+/*---------------------------------------Funzioni UART--------------------------------*/
+
+static void process_packet(void){
+    uint8_t command_id = uart_packet_buffer[1];
+    uint16_t len = (uart_packet_buffer[3]<<8) | uart_packet_buffer[2];
+    uint8_t* payload = &uart_packet_buffer[4];
+
+    // Gestione comandi
+
+
+}
+
+
+static void uart_event_handler(nrf_drv_uart_event_t * p_event, void * p_context){
+
+    if(p_event->type == NRF_DRV_UART_EVT_RX_DONE){
+    
+        // Prendo il byte ricevuto
+        uint8_t data = p_event->data.rxtx.p_data[0];
+
+        switch(uart_state){
+        
+            case STATE_WAIT_FOR_START:
+                if (data==START_BYTE){
+                    
+                    uart_packet_index = 0;
+                    uart_packet_buffer[uart_packet_index++] = data;
+                    uart_state = STATE_RECEIVE_CMD; // Aspetto di ricevere comando
+
+                }
+                break;
+            case STATE_RECEIVE_CMD:
+                uart_packet_buffer[uart_packet_index++] = data;
+                uart_state = STATE_RECEIVE_LEN_LSB;
+                break;
+            
+            case STATE_RECEIVE_LEN_LSB:
+                uart_payload_len = data;
+                uart_packet_buffer[uart_packet_index++] = data;
+                uart_state = STATE_RECEIVE_LEN_MSB;
+                break;
+
+            case STATE_RECEIVE_LEN_MSB:
+
+                // Combino i byte ricevuti per formare lunghezza a 16 bit
+                uart_payload_len |= ((uint16_t)data<<8);
+                uart_packet_buffer[uart_packet_index++] = data;
+
+                // Verifico che la lunghezza non superi quella massima
+                if(uart_payload_len > MAX_PAYLOAD_SIZE){
+                    uart_state = STATE_WAIT_FOR_START; // resetto, scartando il pacchetto
+                } else if (uart_payload_len == 0){
+                    uart_state = STATE_RECEIVE_CHECKSUM; // nessun payload necessario per questo comando
+                } else {
+                    uart_state = STATE_RECEIVE_PAYLOAD;
+                }
+
+                break;
+
+            case STATE_RECEIVE_PAYLOAD:
+
+                // continuo a salvare dati, fin tanto quando 
+                // la differenza tra l'indice (sottratto ai 4 byte iniziali) non raggiunge 
+                // la lunghezza del payload
+                uart_packet_buffer[uart_packet_index++] = data;
+                if((uart_packet_index-4)>=uart_payload_len){
+                    uart_state = STATE_RECEIVE_CHECKSUM;
+                }
+
+                break;
+
+            
+            case STATE_RECEIVE_CHECKSUM:
+                uart_packet_buffer[uart_packet_index++] = data;
+                
+                uint8_t checksum = 0;
+                for (int i=0;i<uart_packet_index-1;i++){
+                    checksum += uart_packet_buffer[i];
+                }
+
+                if(checksum==data){ // pacchetto ricevuto correttamente
+                    uart_new_command = true;
+                }
+
+                // resetto lo stato
+                uart_state = STATE_WAIT_FOR_START;
+
+                break;
+    
+        }
+
+        nrf_drv_uart_rx(&m_uart, &m_uart_rx_byte, 1);
+    
+    }
+
+}
+
+
+
+
+
+
+/*-------------------------------------fine------------------------------------*/
+
+
+
+
+
 
 
 #if 1
@@ -1236,6 +1170,7 @@ static void spis_event_handler(nrf_drv_spis_event_t event)
 /*
 Funzione che inizializza dispositivo come slave SPI
 */
+
 static void spi_slave_init(void)
 {   
     memset(m_spi_tx_buf, 0xAA, SPI_TX_DATA_BUFFER_SIZE); // Inizializza con pattern alternato
@@ -1277,18 +1212,6 @@ static void spi_slave_init(void)
    /* Setup some LEDs for debug Green and Blue on DWM1001-DEV */
     LEDS_CONFIGURE(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK);
     //LEDS_ON(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK );
-
-  #ifdef USE_FREERTOS
-    /* Create task for LED0 blinking with priority set to 2 */
-    UNUSED_VARIABLE(xTaskCreate(led_toggle_task_function, "LED0", configMINIMAL_STACK_SIZE + 200, NULL, 2, &led_toggle_task_handle));
-
-    /* Start timer for LED1 blinking */
-    led_toggle_timer_handle = xTimerCreate( "LED1", TIMER_PERIOD, pdTRUE, NULL, led_toggle_timer_callback);
-    UNUSED_VARIABLE(xTimerStart(led_toggle_timer_handle, 0));
-
-    /* Create task for SS TWR Initiator set to 2 */
-    UNUSED_VARIABLE(xTaskCreate(ss_initiator_task_function, "SSTWR_INIT", configMINIMAL_STACK_SIZE + 200, NULL, 2, &ss_main_task_handle));
-  #endif // #ifdef USE_FREERTOS
  
    /*Initialization UART*/
    boUART_Init();
@@ -1298,7 +1221,7 @@ static void spi_slave_init(void)
    nrf_drv_clock_lfclk_request(NULL);
 
    /* Initialize SPI Slave */
-   spi_slave_init();
+   //spi_slave_init();
    //printf("SPI Inizializzato!\r\n");
    //nrf_delay_ms(1000);
  
@@ -1398,15 +1321,6 @@ static void spi_slave_init(void)
    }
 
    //uint8_t current_spi_command = 0; // Store command being processed
- 
- 
- #ifdef USE_FREERTOS
-   /* Start FreeRTOS scheduler. */
-   vTaskStartScheduler();	
- 
-   while(1) 
-   {};
- #else
   
   /*
   // Test misurazione tempo

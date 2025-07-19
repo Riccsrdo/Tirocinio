@@ -19,7 +19,11 @@ Per far funzionare SPI, inoltre, è necessario:
     2) Modificare SPIS2_ENABLED a 1
 Così facendo il dispositivo può essere configurato in modalità slave, così da permettere la comunicazione con un master.
 
-Ogni dispositivo sarà configurabile tramite SPI in futuro. [TBU]
+Infine, occorre:
+1) Aprire di nuovo il file sdk_config.h.
+2) Commentare, alla riga 49, `#DEFINE FreeRTOS`.
+
+Ogni dispositivo sarà configurabile tramite SPI in futuro. [TBU] - RIMOSSO
 
 Una volta fatto questo sarà possibile effettuare una build del progetto, e per farlo occorrerà:
 1) Cliccare "build" nella barra di utilità in alto
