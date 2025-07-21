@@ -275,7 +275,7 @@
   static char uart_packet_buffer[PACKET_BUFFER_SIZE]; 
   static uint16_t uart_packet_index = 0;
   static uint16_t uart_payload_len = 0;
-  static volatile bool uart_new_command = false;
+  volatile bool uart_new_command = false; // TODO: Verifica se funziona con dichiarazione extern, sennò rimetti static qui (prima di volatile)
 
   // FSM per UART
   typedef enum {
@@ -289,9 +289,12 @@
 
   static uart_rx_state_t uart_state = STATE_WAIT_FOR_START; // parte in attesa di comandi
 
+  // payload risposta
+  static uint8_t success_payload[1];
+
   // Istanza driver uart
   static const nrf_drv_uart_t m_uart = NRF_DRV_UART_INSTANCE(0);
-  static uint8_t m_uart_rx_byte: // byte ricezione
+  static uint8_t m_uart_rx_byte; // byte ricezione
 
   /*------------------------------fine-------------------------------*/
 
@@ -478,14 +481,382 @@ int compare_doubles(const void * a, const void * b){
 
 
 
+
+
+
+
+
+/*-------------------------------------Configurazione------------------------------------*/
+
+// Funzione che permette di inizializzare array di id con le impostazioni attuali
+static void init_config_arrays(void){
+  
+  // Per prima cosa effettuo una copia degli array che ho già salvato
+  for (int i=0; i<MAX_RESPONDERS; i++){
+    config_anchor_ids[i]=anchor_ids[i];
+    config_anchor_enabled[i]=anchor_enabled[i];
+  }
+
+  // Poi conto il numero di dispositivi attualmente abilitati
+  config_num_devices = 0;
+  for (int i=0; i < MAX_RESPONDERS; i++){
+    if(anchor_enabled[i]){
+      config_num_devices++;
+    }
+  }
+}
+
+// Funzione che, dopo le modifiche effettuate in modalità configurazione
+// le applica agli array effettivi
+static void apply_config_changes(void){
+  
+  // Applico solo se in modalità configurazione
+  if (in_config_mode){
+    
+    for(int i=0; i<MAX_RESPONDERS; i++){
+      anchor_ids[i] = config_anchor_ids[i];
+      anchor_enabled[i] = config_anchor_enabled[i];
+    }
+
+    printf("Nuova configurazione applicata!\r\n");
+  }
+}
+
+/*-------------------------------------fine------------------------------------*/
+
+
+
+
+
+
+
+
+
+
+
 /*---------------------------------------Funzioni UART--------------------------------*/
+
+/**
+* @brief Costruisce e invia un pacchetto di risposta via UART.
+*
+* @param response_id ID del messaggio di risposta.
+* @param p_payload    Puntatore al buffer del payload. Se NULL, payload non è inviato
+* @param len          Lunghezza del payload.
+*/
+void send_response_packet(uint8_t response_id, const uint8_t *p_payload, uint16_t len){
+    // La dimensione del pacchetto di risposta è 4 + dimensione payload
+    uint16_t dim_pacchetto = 4 + len;
+    // Definisco un buffer in cui salvo la risposta
+    uint8_t response_buffer[dim_pacchetto];
+
+    // Popolo il buffer
+    response_buffer[0] = response_id;
+    response_buffer[1] = (uint8_t)(len & 0xFF); // len LSB
+    response_buffer[2] = (uint8_t)((len>>8) & 0xFF); // len MSB
+
+    // salvo il payload, se presente
+    if(p_payload!=NULL && len>0){
+        memcpy(&response_buffer[3], p_payload, len);
+    }
+
+    // calcolo checksum, per permettere check su rpi
+    uint8_t checksum = 0;
+    for (int i=0;i<dim_pacchetto-1;i++){
+        checksum += response_buffer[i];
+    }
+
+    response_buffer[dim_pacchetto-1] = checksum;
+
+    // invio pacchetto via UART
+    nrf_drv_uart_tx(&m_uart, response_buffer, dim_pacchetto);
+
+}
 
 static void process_packet(void){
     uint8_t command_id = uart_packet_buffer[1];
     uint16_t len = (uart_packet_buffer[3]<<8) | uart_packet_buffer[2];
     uint8_t* payload = &uart_packet_buffer[4];
 
-    // Gestione comandi
+    switch (command_id)
+    {   
+        case SPI_CMD_ECHO_TEST:
+            send_response_packet(command_id, payload, len); // rimando indietro ciò che ho ricevuto
+            break;
+
+        case SPI_CMD_SET_MODE_INIT:
+            if (device_mode != DEVICE_MODE_INITIATOR) {
+                device_mode = DEVICE_MODE_INITIATOR;
+                bool_mode_changed = true; // Signal UWB logic in main loop
+                //printf("Cambiamento modalità a Iniziatore!\r\n");
+                // Invio risposta senza payload di ACK
+                send_response_packet(command_id, NULL, 0);
+            }
+            break;
+
+        case SPI_CMD_SET_MODE_RESP:
+             if (device_mode != DEVICE_MODE_RESPONDER) {
+                device_mode = DEVICE_MODE_RESPONDER;
+                bool_mode_changed = true; // Signal UWB logic
+                //printf("Cambiamento modalità a Responder!\r\n");
+                send_response_packet(command_id, NULL, 0);
+            }
+            break;
+
+        case SPI_CMD_SET_ID:
+            if (len == 8) { // 8 byte dispositivo
+                uint64_t device_id = 0;
+                // Costruisco a partire dagli 8 byte ricevuti
+                for (int i = 0; i < 8; i++){
+                  device_id |= ((uint64_t)payload[i] << (i * 8));
+                }
+                DEVICE_ID = device_id;
+
+                uint32_t id_high = (uint32_t)(device_id>>32);
+                uint32_t id_low = (uint32_t)(device_id & 0xFFFFFFFFUL);
+                //printf("ID del dispositivo settato a %08lX%08lX\r\n", id_high, id_low);
+
+                } else { /* Handle invalid ID */ }
+            break;
+
+         case SPI_CMD_ENABLE_ANCHOR:
+             if (len == 8) {
+                uint64_t device_id = 0;
+                // Costruisco a partire dagli 8 byte ricevuti
+                for (int i = 0; i < 8; i++){
+                  device_id |= ((uint64_t)payload[i] << (i * 8));
+                }
+
+                int idx;
+                for(int i=0; i<MAX_RESPONDERS;i++){
+                    if (anchor_ids[i]==device_id){
+                        anchor_enabled[i]=true;
+                        idx=i;
+                        break;
+                    }
+                }
+
+                if(idx!=-1) { // ho trovato entry nella lista ancore
+                    success_payload[0] = 0x01;
+                    send_response_packet(command_id, success_payload, 1);
+                } else { // niente entry, invio payload con 0x00
+                    success_payload[0] = 0x00;
+                    send_response_packet(command_id, success_payload, 1);
+                }
+                
+             } else { /* Handle invalid ID */ }
+             break;
+
+         case SPI_CMD_DISABLE_ANCHOR:
+              if (len == 8) {
+                uint64_t device_id = 0;
+                // Costruisco a partire dagli 8 byte ricevuti
+                for (int i = 0; i < 8; i++){
+                  device_id |= ((uint64_t)payload[i] << (i * 8));
+                }
+
+                int idx = -1;
+                for(int i=0; i<MAX_RESPONDERS;i++){
+                    if (anchor_ids[i]==device_id){
+                        anchor_enabled[i]=false;
+                        idx=i;
+                        break;
+                    }
+                }
+                
+             
+                if(idx!=-1) { // ho trovato entry nella lista ancore
+                    success_payload[0] = 0x01;
+                    send_response_packet(command_id, success_payload, 1);
+                } else { // niente entry, invio payload con 0x00
+                    success_payload[0] = 0x00;
+                    send_response_packet(command_id, success_payload, 1);
+                }
+
+
+                
+             } else { /* Handle invalid ID */ }
+             break;
+          case SPI_CMD_ENTER_CONFIG_MODE:
+              if(!in_config_mode){
+                in_config_mode = true;
+                init_config_arrays();
+                //printf("Entrato in modalità configurazione \r\n");
+                send_response_packet(command_id, NULL, 0);
+              }
+
+            case SPI_CMD_EXIT_CONFIG_MODE:
+              if (in_config_mode) {
+                apply_config_changes();
+                in_config_mode = false;
+                //printf("Uscito dalla modalità configurazione\r\n");
+                send_response_packet(command_id, NULL, 0);
+              }
+
+            case SPI_CMD_SET_NUM_DEVICES:
+              if (in_config_mode && len > 1) {
+                uint8_t num = payload[0];
+                if (num < MAX_RESPONDERS) {
+                  config_num_devices = num;
+                  //printf("Numero di dispositivi settato a: %d\r\n", config_num_devices);
+                  success_payload[0] = 0x01;
+                  send_response_packet(command_id, success_payload, 1);
+                } 
+              } else if (!in_config_mode) {
+                //printf("Comando ignorato, dispositivo non in config mode\r\n");
+                success_payload[0] = 0x00;
+                  send_response_packet(command_id, success_payload, 1);
+              }
+              break;
+
+            case SPI_CMD_SET_DEVICE_ID_AT:
+              if (in_config_mode && len == 9) // 1 byte index array + 8 byte id
+              {
+                uint8_t idx = payload[0];
+                if(idx < MAX_RESPONDERS){
+                  uint64_t device_id = 0;
+
+                  // Costruisco id a 64 bit a partire da 8 byte
+                  for(int i = 0; i<8; i++){
+                    device_id |= ((uint64_t)payload[1+i] << (i * 8));
+                  }
+
+                  config_anchor_ids[idx] = device_id;
+                  config_anchor_enabled[idx] = true;
+
+                  uint32_t id_high = (uint32_t)(device_id>>32);
+                  uint32_t id_low = (uint32_t)(device_id & 0xFFFFFFFFUL);
+                  //printf("ID all'indice %d settato a %08lX%08lX\r\n", idx, id_high, id_low);
+
+                  success_payload[0] = 0x01;
+                  send_response_packet(command_id, success_payload, 1);
+                }
+              } else if (!in_config_mode){
+                printf("Dispositivo non in config mode\r\n");
+                success_payload[0] = 0x00;
+                send_response_packet(command_id, success_payload, 1);
+              }
+              else {
+                success_payload[0] = 0x00;
+                send_response_packet(command_id, success_payload, 1);
+                printf("Formato del comando non valido\r\n");
+              }
+
+              break;
+
+            case SPI_CMD_MEASURE_DISTANCE:
+                if(len == 9) { // Payload: 8 byte ID + 1 byte num_samples
+                    uint64_t target_id = 0;
+                    memcpy(&target_id, &payload[0], sizeof(uint64_t)); // Modo più sicuro per copiare
+                    uint8_t num_samples = payload[8];
+                  
+                    // Esegui la misurazione
+                    average_measurement_t result = perform_average_measurement(target_id, num_samples);
+
+                    // Prepara e invia la risposta
+                    uint8_t response_payload[19]; // valid(1) + req(1) + count(1) + id(8) + dist(8)
+                    response_payload[0] = result.valid ? 1 : 0;
+                    response_payload[1] = result.requested_samples;
+                    response_payload[2] = result.samples_count;
+                    memcpy(&response_payload[3], &result.target_id, sizeof(uint64_t));
+                    memcpy(&response_payload[11], &result.average_distance, sizeof(double));
+                
+                    send_response_packet(command_id, response_payload, sizeof(response_payload));
+                }
+                break;
+
+            case SPI_CMD_MEASURE_ALL_DISTANCES:
+                if (len == 1) { // Payload: 1 byte num_samples
+                    uint8_t num_samples = payload[0];
+                
+                    // Avvia le misurazioni verso tutti i dispositivi
+                    measure_all_distances(num_samples); // Questa funzione popola `measurements` e `num_valid_measurements`
+
+                    // Costruisci il payload della risposta
+                    // Formato: num_valid(1) + [id(8)+samples(1)+dist(8)] * num_valid
+                    const int bytes_per_meas = sizeof(uint64_t) + sizeof(uint8_t) + sizeof(double);
+                    uint16_t response_payload_len = 1 + (num_valid_measurements * bytes_per_meas);
+                    uint8_t response_payload[response_payload_len];
+
+                    response_payload[0] = num_valid_measurements;
+                    int current_pos = 1;
+
+                    for (int i = 0; i < num_valid_measurements; i++) {
+                        memcpy(&response_payload[current_pos], &measurements[i].target_id, sizeof(uint64_t));
+                        current_pos += sizeof(uint64_t);
+                        response_payload[current_pos++] = measurements[i].samples_count;
+                        memcpy(&response_payload[current_pos], &measurements[i].average_distance, sizeof(double));
+                        current_pos += sizeof(double);
+                    }
+                
+                    send_response_packet(command_id, response_payload, response_payload_len);
+                }
+                break;
+
+            case SPI_CMD_GET_INFO:
+                {
+                    uint8_t info_payload[11]; // mode(1) + id(8) + enabled_mask(2)
+                    uint16_t enabled_mask = 0;
+
+                    info_payload[0] = (uint8_t)device_mode;
+                    for(int i = 0; i < 8; i++) {
+                        info_payload[1 + i] = (DEVICE_ID >> (i * 8)) & 0xFF;
+                    }
+
+                    for(int i = 0; i < MAX_RESPONDERS; ++i) {
+                        if (anchor_enabled[i]) {
+                            enabled_mask |= (1 << i);
+                        }
+                    }
+                    info_payload[9] = (uint8_t)(enabled_mask & 0xFF);
+                    info_payload[10] = (uint8_t)((enabled_mask >> 8) & 0xFF);
+                
+                    send_response_packet(command_id, info_payload, sizeof(info_payload));
+                }
+                break;
+
+            case SPI_CMD_GET_HELP:
+                 {
+                    char help_str[] = "Comandi supportati: GET_INFO, SET_MODE, MEASURE, ecc.";
+                    send_response_packet(command_id, (uint8_t*)help_str, strlen(help_str));
+                 }
+                 break;
+
+            case SPI_SET_NLOS_MODE:
+                nlos_mode = true;
+                dwt_configure(&nlos_config);
+                send_response_packet(command_id, NULL, 0); // ACK
+                break;
+
+            case SPI_SET_LOS_MODE:
+                nlos_mode = false;
+                dwt_configure(&config);
+                send_response_packet(command_id, NULL, 0); // ACK
+                break;
+
+            case SPI_SET_ANTENNA_RX_DELAY:
+                if (len == 2) { // Payload: 2 byte delay
+                    uint16_t delay = payload[0] | (payload[1] << 8);
+                    RECEIVER_DELAY = delay;
+                    dwt_setrxantennadelay(RECEIVER_DELAY);
+                    send_response_packet(command_id, NULL, 0); // ACK
+                }
+                break;
+
+            case SPI_SET_ANTENNA_TX_DELAY:
+                if (len == 2) {
+                    uint16_t delay = payload[0] | (payload[1] << 8);
+                    TRANSMITTER_DELAY = delay;
+                    dwt_settxantennadelay(TRANSMITTER_DELAY);
+                    send_response_packet(command_id, NULL, 0); // ACK
+                }
+                break;
+
+            default:
+                // Comando non riconosciuto, potresti inviare una risposta NACK (Not Acknowledged)
+                send_response_packet(0xFF, NULL, 0); // 0xFF come ID di errore generico
+                break;
+  
+    }
 
 
 }
@@ -573,6 +944,26 @@ static void uart_event_handler(nrf_drv_uart_event_t * p_event, void * p_context)
     
     }
 
+}
+
+/**
+*@brief Inizializza UART.
+*/
+static void uart_init(void)
+{
+    uint32_t err_code;
+    const nrf_drv_uart_config_t config = {
+        .pseltxd = UART_TX_PIN, .pselrxd = UART_RX_PIN,
+        .pselcts = NRF_UART_PSEL_DISCONNECTED, .pselrts = NRF_UART_PSEL_DISCONNECTED,
+        .p_context = NULL, .hwfc = NRF_UART_HWFC_DISABLED,
+        .parity = NRF_UART_PARITY_EXCLUDED, .baudrate = NRF_UART_BAUDRATE_115200,
+        .interrupt_priority = APP_IRQ_PRIORITY_LOW
+    };
+
+    err_code = nrf_drv_uart_init(&m_uart, &config, uart_event_handler);
+    APP_ERROR_CHECK(err_code);
+    nrf_drv_uart_rx_enable(&m_uart);
+    nrf_drv_uart_rx(&m_uart, &m_uart_rx_byte, 1);
 }
 
 
@@ -802,40 +1193,6 @@ static void prepare_config_info_for_spi(void){
     memset(&m_spi_tx_buf[tx_len], 0, SPI_TX_DATA_BUFFER_SIZE - tx_len);
   }
 
-}
-
-// Funzione che permette di inizializzare array di id con le impostazioni attuali
-static void init_config_arrays(void){
-  
-  // Per prima cosa effettuo una copia degli array che ho già salvato
-  for (int i=0; i<MAX_RESPONDERS; i++){
-    config_anchor_ids[i]=anchor_ids[i];
-    config_anchor_enabled[i]=anchor_enabled[i];
-  }
-
-  // Poi conto il numero di dispositivi attualmente abilitati
-  config_num_devices = 0;
-  for (int i=0; i < MAX_RESPONDERS; i++){
-    if(anchor_enabled[i]){
-      config_num_devices++;
-    }
-  }
-}
-
-// Funzione che, dopo le modifiche effettuate in modalità configurazione
-// le applica agli array effettivi
-static void apply_config_changes(void){
-  
-  // Applico solo se in modalità configurazione
-  if (in_config_mode){
-    
-    for(int i=0; i<MAX_RESPONDERS; i++){
-      anchor_ids[i] = config_anchor_ids[i];
-      anchor_enabled[i] = config_anchor_enabled[i];
-    }
-
-    printf("Nuova configurazione applicata!\r\n");
-  }
 }
 
 
@@ -1214,11 +1571,14 @@ static void spi_slave_init(void)
     //LEDS_ON(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK );
  
    /*Initialization UART*/
-   boUART_Init();
+   // boUART_Init(); // sostituita con altra inizializzazione
 
    /* Initialize clock */
    APP_ERROR_CHECK(nrf_drv_clock_init());
    nrf_drv_clock_lfclk_request(NULL);
+
+   // Inizializzazione UART
+   uart_init();
 
    /* Initialize SPI Slave */
    //spi_slave_init();
@@ -1334,10 +1694,26 @@ static void spi_slave_init(void)
   }
   */
   
+  // Ciclo di esecuzione del DWM
+  while(true){
 
-  LEDS_INVERT(BSP_LED_0_MASK);
-    LEDS_INVERT(BSP_LED_1_MASK);
-    LEDS_INVERT(BSP_LED_2_MASK);
+      // 1. Controllo arrivo nuovo pacchetto UART
+      if(uart_new_command){
+          
+          // Ho ricevuto un pacchetto nuovo, resetto il flag
+          uart_new_command=false;
+          // e chiamo la funzione di gestione
+          process_packet();
+      }
+
+      // 2. Eseguo loop di polling con dispositivo in modalità rispondente
+      if(device_mode==DEVICE_MODE_RESPONDER && !in_config_mode){
+          ss_resp_run(DEVICE_ID);
+      }
+
+  
+  }
+
 
 
   while(true){ // DA RIMUOVERE
