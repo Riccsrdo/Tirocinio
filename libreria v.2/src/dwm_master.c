@@ -1,4 +1,8 @@
 #include "dwm_master.h"
+#include <termios.h>
+#include <errno.h>
+#include <sys/select.h>
+#include <unistd.h>
 
 
 // Variabili statiche per la gestione di UART
@@ -20,8 +24,8 @@ int dwm_send_packet(uint8_t command, const uint8_t* payload, size_t payload_len)
     packet[2] = (uint8_t)(payload_len & 0xFF); // Lunghezza LSB
     packet[3] = (uint8_t)((payload_len >> 8) & 0xFF); // Lunghezza MSB
 
-    if(payload && len>0){
-        memccpy(&packet[4], payload, payload_len);
+    if(payload && payload_len > 0){
+        memcpy(&packet[4], payload, payload_len);
     }
 
     uint8_t checksum = 0;
@@ -55,19 +59,20 @@ int read_byte_uart(int timeout_ms) {
     ret = select(uart_fd + 1, &read_fds, NULL, NULL, &timeout);
     if(ret < 0) {
         perror("Errore durante select");
-        return EXIT_FAILURE; // Errore di select
+        return -1; // Errore di select
     } else if(ret == 0) {
-        fprintf(stderr, "Timeout durante la lettura del byte UART.\n");
-        return EXIT_FAILURE; // Timeout
+        //fprintf(stderr, "Timeout durante la lettura del byte UART.\n");
+        return -1; // Timeout
     } else {
         // Leggo il byte dalla UART
-        if(read(uart_fd, &byte, 1) >0) {
+        if(read(uart_fd, &byte, 1) > 0) {
             return byte; // Successo, ritorno il byte letto
         } else {
             perror("Errore durante la lettura del byte UART");
-            return EXIT_FAILURE; // Errore di lettura
+            return -1; // Errore di lettura
         }
     }
+}
 
 
 int dwm_receive_packet(uint8_t* resp_buffer, uint16_t max_len, uint16_t* out_len, int timeout_ms) {
@@ -77,7 +82,7 @@ int dwm_receive_packet(uint8_t* resp_buffer, uint16_t max_len, uint16_t* out_len
     uint16_t payload_len = 0;
 
     enum {
-        STATE_WAIT_FOR_START, STATE_RECEIVE_ID, STATE_RECEIVE_LEN_LSB,
+        STATE_RECEIVE_ID, STATE_RECEIVE_LEN_LSB,
         STATE_RECEIVE_LEN_MSB, STATE_RECEIVE_PAYLOAD, STATE_RECEIVE_CHECKSUM
     } state = STATE_RECEIVE_ID;
 
@@ -87,46 +92,51 @@ int dwm_receive_packet(uint8_t* resp_buffer, uint16_t max_len, uint16_t* out_len
 
         byte = read_byte_uart(100);
         if(byte < 0) {
-            fprintf(stderr, "Errore durante la lettura del byte UART.\n");
-            return EXIT_FAILURE; // Errore di lettura
-        } else if(byte == EXIT_FAILURE) {
-            fprintf(stderr, "Timeout durante la lettura del byte UART.\n");
-            return EXIT_FAILURE; // Timeout
+            // This is now a timeout, not a critical error
+            timeout_generale -= 100;
+            if(timeout_generale <= 0) {
+                 fprintf(stderr, "Timeout durante la ricezione del pacchetto UART.\n");
+                 return EXIT_FAILURE;
+            }
+            continue;
         }
 
-        timeout_generale -= 100;
 
         if (packet_idx >= max_len) {
             fprintf(stderr, "Errore: Buffer di risposta troppo piccolo.\n");
             return EXIT_FAILURE; // Buffer troppo piccolo
         }
 
-        response_buffer[packet_idx++] = (uint8_t)byte;
+        resp_buffer[packet_idx++] = (uint8_t)byte;
 
         switch(state) {
             case STATE_RECEIVE_ID:
                 state = STATE_RECEIVE_LEN_LSB;
+                printf("Passo a ricezione len lsb\n");
                 break;
             case STATE_RECEIVE_LEN_LSB:
                 payload_len = byte; // LSB della lunghezza del payload
                 state = STATE_RECEIVE_LEN_MSB;
+                printf("Passo a ricezione len msb\n");
                 break;
             case STATE_RECEIVE_LEN_MSB:
                 payload_len |= ((uint16_t)byte << 8); // MSB della lunghezza del payload
                 if(payload_len == 0) state = STATE_RECEIVE_CHECKSUM; // Nessun payload
                 else state = STATE_RECEIVE_PAYLOAD; // Aspetto il payload
+                printf("Passo al prossimo\n");
                 break;
             case STATE_RECEIVE_PAYLOAD:
                 if(packet_idx >= (payload_len + 3)) { // 3 byte per ID e lunghezza
                     state = STATE_RECEIVE_CHECKSUM; // Ho ricevuto tutto il payload
                 }
+                printf("pasos al calcolo checksum\n");
                 break;
 
             case STATE_RECEIVE_CHECKSUM:
                 // Calcolo checksum
                 uint8_t checksum = 0;
-                for (int i = 0; i < packet_idx - 1; i++) {
-                    checksum += response_buffer[i];
+                for (uint16_t i = 0; i < packet_idx - 1; i++) {
+                    checksum += resp_buffer[i];
                 }
                 if(checksum == (uint8_t)byte) {
                     *out_len = packet_idx; // Imposto la lunghezza del pacchetto ricevuto
@@ -138,7 +148,7 @@ int dwm_receive_packet(uint8_t* resp_buffer, uint16_t max_len, uint16_t* out_len
         }
     }
 
-    fprintf(stderr, "Errore: Timeout durante la ricezione del pacchetto UART.\n");
+    fprintf(stderr, "Errore: Timeout generale durante la ricezione del pacchetto UART.\n");
     return EXIT_FAILURE; // Timeout generale
 
 }
@@ -172,13 +182,13 @@ int dwm_uart_init(const char* device, uint32_t baudrate) {
     tty.c_cflag &= ~CSTOPB; // 1 bit di stop
     tty.c_cflag &= ~CRTSCTS; // Disabilita il controllo di flusso hardware
 
-    tty.c_lflags &= ~(ICANON | ECHO | ECHOE | ISIG); // Modalità non canonica, senza echo
+    tty.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG); // Modalità non canonica, senza echo
     tty.c_iflag &= ~(IXON | IXOFF | IXANY); // Disabilita il controllo di flusso software
     tty.c_oflag &= ~OPOST; // Modalità raw
 
     // Configurazione letture non bloccanti
     tty.c_cc[VMIN] = 0; // Nessun byte minimo da leggere
-    tty.c_cc[VTIME] = 0; // Nessun timeout
+    tty.c_cc[VTIME] = 5; // Timeout di 0.5 secondi
 
     if(tcsetattr(uart_fd, TCSANOW, &tty) != 0) { // Applico le impostazioni
         perror("Errore impostazione UART");
@@ -187,7 +197,7 @@ int dwm_uart_init(const char* device, uint32_t baudrate) {
         return EXIT_FAILURE; // Errore di impostazione
     }
 
-    printf("UART Inizializzata: %s a %d baud\n", device, baudrate);
+    printf("UART Inizializzata: %s a %d baud\n", device, (int)baudrate);
     return EXIT_SUCCESS; // Successo
 }
 
@@ -207,7 +217,7 @@ int dwm_uart_close(void) {
 }
 
 int dwm_set_initiator(void) {
-    uint8_t command = CMD_SET_MODE_INITIATOR;
+    uint8_t command = CMD_SET_MODE_INIT;
     uint8_t response[5]; // comando + len + status + checksum
     uint16_t resp_len;
 
@@ -235,7 +245,7 @@ int dwm_set_initiator(void) {
 }
 
 int dwm_set_responder(void) {
-    uint8_t command = CMD_SET_MODE_RESPONDER;
+    uint8_t command = CMD_SET_MODE_RESP;
     uint8_t response[5]; // comando + len + status + checksum
     uint16_t resp_len;
 
@@ -244,12 +254,15 @@ int dwm_set_responder(void) {
         return EXIT_FAILURE; // Errore di invio
     }
 
+    usleep(50000); // Attendo un breve periodo per garantire che il comando sia elaborato
+
     // Attendo risposta con ACK o NACK
-    if(dwm_receive_packet(response, sizeof(response), &resp_len, 300) != EXIT_SUCCESS) {
+    if(dwm_receive_packet(response, sizeof(response), &resp_len, 1000) != EXIT_SUCCESS) {
         fprintf(stderr, "Errore durante la ricezione della risposta per la modalità rispondente.\n");
         return EXIT_FAILURE; // Errore di ricezione
     }
 
+    /*
     if(response[3] == 0x01) { // Risposta positiva
         printf("Modalità rispondente impostata correttamente.\n");
         return EXIT_SUCCESS; // Successo
@@ -257,56 +270,13 @@ int dwm_set_responder(void) {
         fprintf(stderr, "Errore: Modalità rispondente non impostata correttamente.\n");
         return EXIT_FAILURE; // Errore di risposta
     }
+        */
 
     return EXIT_FAILURE; // Non dovrebbe mai arrivare qui
 
 }
 
-
-int dwm_set_id(uint64_t new_id){
-    uint8_t tx_buff[9]; // comando + 8 byte id
-    uint8_t rx_buff[9]; // buffer di ricezione ignorato
-
-    tx_buff[0] = CMD_SET_ID;
-    // popolo il resto del buffer con il nuovo id
-    // scomposto in 8 byte
-    for(int i=0; i<8; i++){
-        tx_buff[i+1] = (uint8_t)((new_id >> (i*8)) & 0xFF);
-    }
-
-    // Invio comando e id
-    int ret = dwm_spi_transfer(tx_buff, rx_buff, sizeof(tx_buff));
-    if(ret!=0){
-        fprintf(stderr, "Errore durante invio comando SET_ID\n");
-        return EXIT_FAILURE;
-    }
-
-    printf("Ide del dispositivo impostato a 0x%llx\n", (unsigned long long)new_id);
-    return EXIT_SUCCESS;
-}
-
-int dwm_enable_device(uint64_t anchor_id){
-    uint8_t tx_buff[9]; // comando + 8 byte id
-    uint8_t rx_buff[9]; // ignorato
-
-    tx_buff[0] = CMD_ENABLE_ANCHOR;
-    //popolo array con id scomposto in 8 byte
-    for(int i=0; i<8; i++){
-        tx_buff[i+1] = (uint8_t)((anchor_id >> (i*8)) & 0xFF);
-    }
-
-    // invio e ricevo risposta
-    int ret = dwm_spi_transfer(tx_buff, rx_buff, sizeof(tx_buff));
-    if(ret!=0){
-        fprintf(stderr, "Errore nell'invio comando ENABLE_ANCHOR\n");
-        return EXIT_FAILURE;
-    }
-
-    printf("Abilitata ancora con id 0x%llx\n", (unsigned long long)anchor_id);
-
-    return EXIT_SUCCESS;
-}
-
+#if 0
 int dwm_disable_device(uint64_t anchor_id){
     uint8_t tx_buff[9]; // comando + 8 byte id
     uint8_t rx_buff[9]; // ignorato
@@ -582,3 +552,4 @@ int dwm_measure_all(uint8_t num_samples, AverageMeasurement* results, int max_re
     return EXIT_SUCCESS;
 
 }
+#endif

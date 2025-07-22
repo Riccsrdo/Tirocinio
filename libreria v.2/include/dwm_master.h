@@ -81,13 +81,58 @@ int dwm_uart_init(const char* device, uint32_t baudrate);
 /**
  * @brief Chiude l'interfaccia UART.
  */
-void dwm_uart_close(void);
+int dwm_uart_close(void);
 
+/**
+ * @brief Invia pacchetto sulla UART.
+ * 
+ * @param command Il comando da inviare.
+ * @param payload Il payload del pacchetto.
+ * @param payload_len La lunghezza del payload.
+ *
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
+ */
+int dwm_send_packet(uint8_t command, const uint8_t* payload, size_t payload_len);
+
+/**
+ * @brief Riceve un byte da UART, con timeout.
+ * 
+ * @param timeout_ms Timeout in millisecondi.
+ * 
+ * @return Il byte ricevuto, o -1 in caso di timeout o errore.
+ */
+int read_byte_uart(int timeout_ms);
+
+/**
+ * @brief Riceve un pacchetto completo dalla UART.
+ * 
+ * @param resp_buffer Buffer in cui memorizzare la risposta.
+ * @param max_len Lunghezza massima del buffer di risposta.
+ * @param out_len Puntatore a variabile in cui memorizzare la lunghezza del pacchetto ricevuto.
+ * @param timeout_ms Timeout in millisecondi.
+ * 
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
+ */
+int dwm_receive_packet(uint8_t* resp_buffer, uint16_t max_len, uint16_t* out_len, int timeout_ms);
 
 
 /*--- Funzioni di comunicazione effettive per DWM1001-Dev */
 
+/**
+ * @brief Imposta il dispositivo come iniziatore.
+ * 
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
+ */
+int dwm_set_initiator(void);
 
+/**
+ * @brief Imposta il dispositivo come rispondente.
+ * 
+ * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
+ */
+int dwm_set_responder(void);
+
+#if 0
 /**
  * @brief Imposta id del dispositivo (64 bit) connesso via SPI.
  * 
@@ -169,6 +214,6 @@ int dwm_measure(uint64_t target_id, uint8_t num_samples, AverageMeasurement* res
  * @return EXIT_SUCCESS in caso di successo, EXIT_FAILURE in caso di errore.
  */
 int dwm_measure_all(uint8_t num_samples, AverageMeasurement* results, int max_results, uint8_t* out_valid_count);
-
+#endif
 
 #endif // DWM_SPI_MASTER_RPI_H
