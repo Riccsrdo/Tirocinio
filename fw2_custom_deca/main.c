@@ -209,6 +209,8 @@
  #define SPI_CMD_EXIT_CONFIG_MODE 0x41 // Esci dalla modalità di configurazione e salva le modifiche
  #define SPI_CMD_SET_NUM_DEVICES 0x42 // Imposta il numero di dispositivi con cui si vuole comunicare
  #define SPI_CMD_SET_DEVICE_ID_AT 0x43 // Imposta l'id del dispositivo all'index desiderato nella lista di ID
+ #define SPI_CMD_GET_NUM_DEVICES 0x44 // Ottiene numero dispositivi abilitati
+
  #define SPI_CMD_MEASURE_DISTANCE 0x50 // Esegue misurazioni multiple e restituisce media, dato id
  #define SPI_CMD_MEASURE_ALL_DISTANCES 0x51 // Misura le distanze average da tutti i dispositivi settati
 
@@ -590,8 +592,9 @@ static void process_packet(void){
                 bool_mode_changed = true; // Signal UWB logic in main loop
                 //printf("Cambiamento modalità a Iniziatore!\r\n");
                 // Invio risposta senza payload di ACK
-                send_response_packet(command_id, NULL, 0);
+                
             }
+            send_response_packet(command_id, NULL, 0);
             break;
 
         case SPI_CMD_SET_MODE_RESP:
@@ -600,10 +603,15 @@ static void process_packet(void){
                 bool_mode_changed = true; // Signal UWB logic
                 //printf("Cambiamento modalità a Responder!\r\n");
                 send_response_packet(command_id, NULL, 0);
-
+                
+                LEDS_ON(BSP_LED_0_MASK);
+                LEDS_OFF(BSP_LED_2_MASK);
+            } else if(device_mode == DEVICE_MODE_RESPONDER) {
+                send_response_packet(command_id, NULL, 0);
+                LEDS_ON(BSP_LED_2_MASK);
                 LEDS_OFF(BSP_LED_0_MASK);
             }
-            break;
+                
 
         case SPI_CMD_SET_ID:
             if (len == 8) { // 8 byte dispositivo
@@ -617,8 +625,14 @@ static void process_packet(void){
                 uint32_t id_high = (uint32_t)(device_id>>32);
                 uint32_t id_low = (uint32_t)(device_id & 0xFFFFFFFFUL);
                 //printf("ID del dispositivo settato a %08lX%08lX\r\n", id_high, id_low);
+                
+                success_payload[0] = 0x01;
+                send_response_packet(command_id, success_payload,1);
 
-                } else { /* Handle invalid ID */ }
+                } else { /* Handle invalid ID */ 
+                    success_payload[0]=0x00;
+                    send_response_packet(command_id, success_payload, 1); // invalid
+                }
             break;
 
          case SPI_CMD_ENABLE_ANCHOR:
@@ -629,7 +643,7 @@ static void process_packet(void){
                   device_id |= ((uint64_t)payload[i] << (i * 8));
                 }
 
-                int idx;
+                int idx = -1;
                 for(int i=0; i<MAX_RESPONDERS;i++){
                     if (anchor_ids[i]==device_id){
                         anchor_enabled[i]=true;
@@ -646,7 +660,10 @@ static void process_packet(void){
                     send_response_packet(command_id, success_payload, 1);
                 }
                 
-             } else { /* Handle invalid ID */ }
+             } else { /* Handle invalid ID */ 
+                  success_payload[0] = 0x00;
+                  send_response_packet(command_id, success_payload, 1);
+             }
              break;
 
          case SPI_CMD_DISABLE_ANCHOR:
@@ -677,23 +694,29 @@ static void process_packet(void){
 
 
                 
-             } else { /* Handle invalid ID */ }
+             } else { /* Handle invalid ID */ 
+                  success_payload[0] = 0x00;
+                  send_response_packet(command_id, success_payload, 1);
+             }
              break;
           case SPI_CMD_ENTER_CONFIG_MODE:
               if(!in_config_mode){
                 in_config_mode = true;
                 init_config_arrays();
                 //printf("Entrato in modalità configurazione \r\n");
-                send_response_packet(command_id, NULL, 0);
               }
+              send_response_packet(command_id, NULL, 0);
+              break;
 
             case SPI_CMD_EXIT_CONFIG_MODE:
               if (in_config_mode) {
                 apply_config_changes();
                 in_config_mode = false;
                 //printf("Uscito dalla modalità configurazione\r\n");
-                send_response_packet(command_id, NULL, 0);
+                
               }
+              send_response_packet(command_id, NULL, 0);
+              break;
 
             case SPI_CMD_SET_NUM_DEVICES:
               if (in_config_mode && len > 1) {
@@ -709,6 +732,7 @@ static void process_packet(void){
                 success_payload[0] = 0x00;
                   send_response_packet(command_id, success_payload, 1);
               }
+              
               break;
 
             case SPI_CMD_SET_DEVICE_ID_AT:
@@ -745,6 +769,20 @@ static void process_packet(void){
               }
 
               break;
+
+            case SPI_CMD_GET_NUM_DEVICES:{
+                uint8_t enabled_devices_num = 0;
+
+                for(int i=0;i<MAX_RESPONDERS;i++){
+                    if(anchor_enabled[i] && anchor_ids[i]!=DEVICE_ID){ // conto dispositivi abilitati (con id diverso dal mio)
+                        enabled_devices_num++;
+                    }
+                }
+
+                send_response_packet(command_id, &enabled_devices_num, 1);
+                break;        
+            }
+                
 
             case SPI_CMD_MEASURE_DISTANCE:
                 if(len == 9) { // Payload: 8 byte ID + 1 byte num_samples
@@ -864,8 +902,30 @@ static void process_packet(void){
 
 }
 
+static volatile bool led_on = true;
+
 
 static void uart_event_handler(nrf_drv_uart_event_t * p_event, void * p_context){
+
+
+    // DEBUG
+    /*
+    if(led_on){
+        LEDS_OFF(BSP_LED_0_MASK);
+        led_on = false;
+    } else {
+        LEDS_ON(BSP_LED_0_MASK);
+        led_on = true;
+    }
+    */
+
+
+    /*
+    if(p_event->type == NRF_DRV_UART_EVT_TX_DONE){
+        LEDS_OFF(BSP_LED_0_MASK| BSP_LED_1_MASK );
+    }
+    */
+    
 
     if(p_event->type == NRF_DRV_UART_EVT_RX_DONE){
     
@@ -949,6 +1009,24 @@ static void uart_event_handler(nrf_drv_uart_event_t * p_event, void * p_context)
 
         nrf_drv_uart_rx(&m_uart, &m_uart_rx_byte, 1);
     
+    } else if(p_event->type == NRF_DRV_UART_EVT_ERROR){
+        // 1. Segnala visivamente che un errore è avvenuto (opzionale)
+        LEDS_ON(BSP_LED_0_MASK); // Accendi LED verde
+        
+        // 2. Disabilita la ricezione UART per resettare lo stato
+        nrf_drv_uart_rx_disable(&m_uart);
+        
+        // 3. Breve pausa per assicurare che lo stato sia pulito
+        nrf_delay_ms(10);
+        
+        // 4. Riabilita la ricezione UART
+        nrf_drv_uart_rx_enable(&m_uart);
+        
+        // 5. Rimettiti in ascolto per il prossimo byte
+        nrf_drv_uart_rx(&m_uart, &m_uart_rx_byte, 1);
+        
+        // 6. Spegni il LED di errore per mostrare che il recupero è completo
+        LEDS_OFF(BSP_LED_0_MASK);
     }
 
 }
@@ -963,7 +1041,7 @@ static void uart_init(void)
         .pseltxd = UART_TX_PIN, .pselrxd = UART_RX_PIN,
         .pselcts = NRF_UART_PSEL_DISCONNECTED, .pselrts = NRF_UART_PSEL_DISCONNECTED,
         .p_context = NULL, .hwfc = NRF_UART_HWFC_DISABLED,
-        .parity = NRF_UART_PARITY_EXCLUDED, .baudrate = NRF_UART_BAUDRATE_115200,
+        .parity = NRF_UART_PARITY_EXCLUDED, .baudrate = NRF_UART_BAUDRATE_9600,
         .interrupt_priority = APP_IRQ_PRIORITY_LOW
     };
 
@@ -987,6 +1065,7 @@ static void uart_init(void)
 
 
 
+#define RESET_MAGIC_NUMBER 0xDEADBEEF
 
 
 
@@ -995,6 +1074,7 @@ static void uart_init(void)
  
  int main(void)
  {  
+    
 
     struct timeval t1,t2;
     double elapsedTime;
@@ -1003,6 +1083,33 @@ static void uart_init(void)
    /* Setup some LEDs for debug Green and Blue on DWM1001-DEV */
     LEDS_CONFIGURE(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK);
     //LEDS_ON(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK );
+
+    LEDS_OFF(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK);
+
+    #if 0
+    // Leggi la causa del reset all'avvio
+    uint32_t reset_reason = NRF_POWER->RESETREAS;
+
+    // Pulisci il registro per il prossimo avvio (best practice)
+    NRF_POWER->RESETREAS = 0xFFFFFFFF;
+
+    // Controlla se il reset è avvenuto per un ciclo di accensione (power-on)
+    // o per un reset tramite il pin fisico. Questo è il "primo avvio".
+    if (reset_reason & POWER_RESETREAS_RESETPIN_Msk)
+    {
+        // Questo è il PRIMO avvio dopo un ciclo di alimentazione.
+        // Accendi un LED per segnalare che stiamo per resettare.
+        LEDS_ON(BSP_LED_2_MASK); // E.g., LED rosso
+
+        // Attendi che la Raspberry Pi si stabilizzi. Potresti dover
+        // aggiustare questo valore.
+        nrf_delay_ms(8000);
+
+        // Esegui il reset software.
+        NVIC_SystemReset();
+    }
+    #endif
+
  
    /*Initialization UART*/
    //boUART_Init(); // sostituita con altra inizializzazione
@@ -1010,6 +1117,15 @@ static void uart_init(void)
    /* Initialize clock */
    APP_ERROR_CHECK(nrf_drv_clock_init());
    nrf_drv_clock_lfclk_request(NULL);
+
+   
+
+   // attendo 10 secondi per permettere all'RPI di avviarsi correttamente
+   //nrf_delay_ms(10000);
+
+   //NVIC_SystemReset();
+
+   //LEDS_ON(BSP_LED_0_MASK);
 
    // Inizializzazione UART
    uart_init();
