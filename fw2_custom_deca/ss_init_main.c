@@ -552,14 +552,15 @@ int ss_resp_run(uint64_t dev_id)
  
     
     // Attendo ricezione, errore o reset della task
-    while (!(rx_int_flag || er_int_flag || to_int_flag || bool_mode_changed || new_spi_command_received)) 
+    while (!(rx_int_flag || er_int_flag || to_int_flag || bool_mode_changed || new_spi_command_received || uart_new_command)) 
     { 
-      
+        nrf_delay_ms(1); // evita loop continui
     };
 
-    if (new_spi_command_received) {
+    if (new_spi_command_received || uart_new_command) {
         //printf("Responder %llu: Comando SPI ricevuto durante attesa UWB, ritorno al main loop.\r\n", (unsigned long long)dev_id);
         dwt_forcetrxoff(); // Disabilita transceiver DW1000 per sicurezza prima di uscire
+        //LEDS_ON(BSP_LED_0_MASK);
         return 1; // Ritorna al main loop che gestirà il comando SPI
     }
 

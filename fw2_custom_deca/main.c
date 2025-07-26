@@ -141,7 +141,7 @@
  #define MAX_RESPONDERS 16 // da aggiornare anche su ss_init_main.c in caso di cambiamento
  #endif
  
- volatile device_mode_t device_mode = DEVICE_MODE_INITIATOR; /* Imposto modalitÃ  iniziale come iniziatore */
+ volatile device_mode_t device_mode = DEVICE_MODE_RESPONDER; /* Imposto modalitÃ  iniziale come iniziatore */
  volatile bool bool_mode_changed = false;                         /* Flag booleana per inidicare che la modalitÃ  Ã¨ cambiata */
  
  /* Impostazioni modalitÃ  multi-risponditore
@@ -592,6 +592,7 @@ static void process_packet(void){
                 bool_mode_changed = true; // Signal UWB logic in main loop
                 //printf("Cambiamento modalità a Iniziatore!\r\n");
                 // Invio risposta senza payload di ACK
+                LEDS_OFF(BSP_LED_1_MASK);
                 
             }
             send_response_packet(command_id, NULL, 0);
@@ -604,13 +605,15 @@ static void process_packet(void){
                 //printf("Cambiamento modalità a Responder!\r\n");
                 send_response_packet(command_id, NULL, 0);
                 
-                LEDS_ON(BSP_LED_0_MASK);
-                LEDS_OFF(BSP_LED_2_MASK);
+                LEDS_ON(BSP_LED_1_MASK);
+                //LEDS_ON(BSP_LED_0_MASK);
+                //LEDS_OFF(BSP_LED_2_MASK);
             } else if(device_mode == DEVICE_MODE_RESPONDER) {
                 send_response_packet(command_id, NULL, 0);
-                LEDS_ON(BSP_LED_2_MASK);
-                LEDS_OFF(BSP_LED_0_MASK);
+                //LEDS_ON(BSP_LED_2_MASK);
+                //LEDS_OFF(BSP_LED_0_MASK);
             }
+            break;
                 
 
         case SPI_CMD_SET_ID:
@@ -1215,6 +1218,7 @@ static void uart_init(void)
    else{
     //dwt_setrxaftertxdelay(POLL_RX_TO_RESP_TX_DLY_UUS);
     dwt_setrxtimeout(0);
+    LEDS_ON(BSP_LED_1_MASK);
    }
    
  
@@ -1258,7 +1262,7 @@ static void uart_init(void)
 
       // 2. Eseguo loop di polling con dispositivo in modalità rispondente
       if(device_mode==DEVICE_MODE_RESPONDER && !in_config_mode){
-          //ss_resp_run(DEVICE_ID);
+          ss_resp_run(DEVICE_ID);
       }
 
   
