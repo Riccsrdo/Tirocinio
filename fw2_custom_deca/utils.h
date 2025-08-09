@@ -40,6 +40,8 @@ extern volatile bool nlos_mode;
 extern volatile int RECEIVER_DELAY;
 extern volatile int TRANSMITTER_DELAY;
 
+extern volatile bool uart_new_command;
+
 /* Dichiarazioni delle funzioni condivise */
 extern int ss_init_run(uint64_t anchor_id);
 extern int ss_resp_run(uint64_t anchor_id);

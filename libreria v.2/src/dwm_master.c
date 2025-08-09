@@ -101,6 +101,8 @@ int dwm_receive_packet(uint8_t* resp_buffer, uint16_t max_len, uint16_t* out_len
             continue;
         }
 
+        printf("0x%02X", (uint8_t)byte); // Stampa il byte ricevuto in esadecimale
+
 
         if (packet_idx >= max_len) {
             fprintf(stderr, "Errore: Buffer di risposta troppo piccolo.\n");
@@ -112,24 +114,24 @@ int dwm_receive_packet(uint8_t* resp_buffer, uint16_t max_len, uint16_t* out_len
         switch(state) {
             case STATE_RECEIVE_ID:
                 state = STATE_RECEIVE_LEN_LSB;
-                printf("Passo a ricezione len lsb\n");
+                //printf("Passo a ricezione len lsb\n");
                 break;
             case STATE_RECEIVE_LEN_LSB:
                 payload_len = byte; // LSB della lunghezza del payload
                 state = STATE_RECEIVE_LEN_MSB;
-                printf("Passo a ricezione len msb\n");
+                //printf("Passo a ricezione len msb\n");
                 break;
             case STATE_RECEIVE_LEN_MSB:
                 payload_len |= ((uint16_t)byte << 8); // MSB della lunghezza del payload
                 if(payload_len == 0) state = STATE_RECEIVE_CHECKSUM; // Nessun payload
                 else state = STATE_RECEIVE_PAYLOAD; // Aspetto il payload
-                printf("Passo al prossimo\n");
+                //printf("Passo al prossimo\n");
                 break;
             case STATE_RECEIVE_PAYLOAD:
                 if(packet_idx >= (payload_len + 3)) { // 3 byte per ID e lunghezza
                     state = STATE_RECEIVE_CHECKSUM; // Ho ricevuto tutto il payload
                 }
-                printf("pasos al calcolo checksum\n");
+                //printf("passo al calcolo checksum\n");
                 break;
 
             case STATE_RECEIVE_CHECKSUM:

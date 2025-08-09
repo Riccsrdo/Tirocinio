@@ -191,10 +191,10 @@ static void resp_msg_get_ts(uint8 *ts_field, uint32 *ts);
 int ss_init_run(uint64_t dev_id)
 { 
   /* Reset interrupts flags*/
-  //tx_int_flag = 0;
-  //rx_int_flag = 0;
-  //to_int_flag = 0;
-  //er_int_flag = 0;
+  tx_int_flag = 0;
+  rx_int_flag = 0;
+  to_int_flag = 0;
+  er_int_flag = 0;
 
 
   // Imposto il valore dell'id del dispositivo con il quale voglio comunicare nel messaggio tx
@@ -268,6 +268,8 @@ int ss_init_run(uint64_t dev_id)
   {		
     uint32 frame_len;
 
+    
+
     /* Clear good RX frame event in the DW1000 status register. */
     //dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG);
 
@@ -294,8 +296,10 @@ int ss_init_run(uint64_t dev_id)
     {
       uint64_t received_id = bytes_to_uint64(&rx_buffer[ALL_MSG_ID_START_IDX]); // salvo id ricevuto
 
+
       if(received_id == dev_id) // Controllo che l'id sia quello del dispositivo a cui volevo inviare originariamente
       {
+        
         rx_count++;
         uint32_t id_alta = (uint32_t)(dev_id >> 32);
         uint32_t id_bassa = (uint32_t)(dev_id & 0xFFFFFFFFUL); // o solo (uint32_t)DEVICE_ID
@@ -572,6 +576,7 @@ int ss_resp_run(uint64_t dev_id)
 
     if (rx_int_flag)
     {   
+
         
         printf("Responder: Ricevuto qualcosa, check del msg...\r\n");
         uint32 frame_len;
@@ -615,6 +620,7 @@ int ss_resp_run(uint64_t dev_id)
 
           if(received_dest_id == dev_id)
           { 
+            
             uint32 resp_tx_time;
             int ret;
             uint32_t id_alta = (uint32_t)(dev_id >> 32);
@@ -665,8 +671,7 @@ int ss_resp_run(uint64_t dev_id)
                 else {
                   printf("Transmission wait interrupted\r\n");
                 }
-
-                
+  
             }
             else
             {
@@ -701,6 +706,11 @@ int ss_resp_run(uint64_t dev_id)
           else 
           {
             printf("messaggio ricevuto non diretto a noi \r\n");
+            LEDS_OFF(BSP_LED_2_MASK);
+
+                nrf_delay_ms(500);
+
+                LEDS_ON(BSP_LED_2_MASK);
           }
         } 
         else
@@ -731,6 +741,8 @@ int ss_resp_run(uint64_t dev_id)
 
       to_int_flag = 0;
     }
+
+
 
     return 1;
 }

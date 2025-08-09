@@ -156,6 +156,8 @@
 
  volatile bool nlos_mode=false; // flag booleana di check se dispositivo in modalità NLoS
 
+ static volatile bool measurement_in_progress = false;
+
  
  
 
@@ -273,7 +275,8 @@
   #define START_BYTE 0xAA
   #define MAX_PAYLOAD_SIZE 512
   #define PACKET_BUFFER_SIZE (MAX_PAYLOAD_SIZE + 5) // Con 5 si intendono i 5 byte extra (1 inizio, 1 cmd, 2 lunghezza, 1 checksum)
-  
+  #define MAX_UART_DIM_RESPONSE_BUFFER 256
+
   static char uart_packet_buffer[PACKET_BUFFER_SIZE]; 
   static uint16_t uart_packet_index = 0;
   static uint16_t uart_payload_len = 0;
@@ -367,28 +370,50 @@ int compare_doubles(const void * a, const void * b){
       .requested_samples = num_samples
     };
 
+    measurement_in_progress = true; // blocco il loop main da tornare in responder
+    dwt_forcetrxoff(); // disattivo ricevitore
+
+    device_mode_t original_mode = device_mode;
+    bool switched_mode = false;
+
+
+    // con responder mode, passso temporaneamente a initiator
+    if (original_mode == DEVICE_MODE_RESPONDER) {
+        //printf("Switch temporaneo a modalità Initiator per misurazione.\r\n");
+        device_mode = DEVICE_MODE_INITIATOR;
+        switched_mode = true;
+
+        // riconfiguro il DW1000 per la modalità Initiator
+        dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
+        dwt_setrxtimeout(65000); // Imposta un timeout per la risposta
+    }
+    
+    /*
     // Effettuo misurazioni solo se in modalità Iniziatore
     if (device_mode != DEVICE_MODE_INITIATOR){
       printf("Dispositivo non in modalità iniziatore, misurazioni non possibili\r\n");
       return result;
     }
+    */
 
     // trovo index target nell'array
     int target_index = -1;
     for (int i = 0; i<MAX_RESPONDERS; i++){
       if(anchor_ids[i]==target_id){
-        target_index = -1;
+        target_index = i;
         break;
       }
+    }
+
+    if (target_index == -1) {
+        printf("Errore: Target ID non trovato nella lista ancore.\r\n");
+        measurement_in_progress = false; // Sblocca il main loop
+        return result;
     }
     
     uint32_t id_high = (uint32_t)(target_id>>32);
     uint32_t id_low = (uint32_t)(target_id & 0xFFFFFFFFUL);
     printf("Inizio misurazioni verso target con id: %08lX%08lX\r\n", id_high, id_low);
-  
-    // Resetto misurazioni per quel target fatte in precedenza
-    distances[target_index].valid=false;
-    distances[target_index].distance=0.0;
 
     double sum_distances = 0.0;
     uint8_t valid_samples = 0;
@@ -396,8 +421,11 @@ int compare_doubles(const void * a, const void * b){
     // Buffer per valori mediani
     double measurements[num_samples];
 
-    // Eseguo 10 misurazioni
+    // Eseguo x misurazioni
     for(uint8_t i = 0; i< num_samples; i++){
+      
+      // resetto le informazioni sulla distanza per questo tentativo
+      distances[target_index].valid = false;
       
       ss_init_run(target_id);
 
@@ -410,13 +438,14 @@ int compare_doubles(const void * a, const void * b){
 
       nrf_delay_ms(50); // breve ritardo
       
-      // In caso di comando SPI ricevuto, si interrompe
-      if(new_spi_command_received){
+      // In caso di comando UART ricevuto, si interrompe
+      if(uart_new_command){
         break;
       }
     }
 
     if(valid_samples>0){
+      
       // Effettuo un sort per prendere il valore mediano
       qsort(measurements, valid_samples, sizeof(double), compare_doubles);
 
@@ -448,6 +477,16 @@ int compare_doubles(const void * a, const void * b){
       printf("Distanza media calcolata dal dispositivo %08lX%08lX è: %f\r\n", id_high, id_low, result.average_distance);
     }
 
+    if (switched_mode) {
+        device_mode = original_mode;
+        // 5. Riconfigura il DW1000 per la modalità Responder
+        dwt_setrxtimeout(0);
+        printf("Misurazione completata. Ritorno a modalità Responder.\r\n");
+    }
+
+
+    measurement_in_progress = false; // sblocco il main
+
 
     return result;
     
@@ -456,8 +495,10 @@ int compare_doubles(const void * a, const void * b){
  static average_measurement_t measure_all_distances(uint8_t num_samples){
     // Controllo se il dispositivo è in configurazione non accetta
     if(device_mode == DEVICE_MODE_RESPONDER){
-      printf("Misurazioni non possibili in modalità risponditore\r\n");
+      //printf("Misurazioni non possibili in modalità risponditore\r\n");
     }
+
+    num_valid_measurements = 0;
 
     average_measurement_t temp_buf;
 
@@ -465,13 +506,12 @@ int compare_doubles(const void * a, const void * b){
       if(anchor_enabled[i] && anchor_ids[i]!=DEVICE_ID) {
         temp_buf = perform_average_measurement(anchor_ids[i], num_samples);
 
-        measurements[i] = temp_buf;
-
-        if(measurements[i].valid){
-          num_valid_measurements++;
+        if(temp_buf.valid) {
+            measurements[num_valid_measurements] = temp_buf;
+            num_valid_measurements++;
         }
       }
-      if(new_spi_command_received){
+      if(new_spi_command_received || uart_new_command){
         break;
       }
     }
@@ -550,7 +590,13 @@ void send_response_packet(uint8_t response_id, const uint8_t *p_payload, uint16_
     // La dimensione del pacchetto di risposta è 4 + dimensione payload
     uint16_t dim_pacchetto = 4 + len;
     // Definisco un buffer in cui salvo la risposta
-    uint8_t response_buffer[dim_pacchetto];
+    static uint8_t response_buffer[MAX_UART_DIM_RESPONSE_BUFFER];
+
+    if (dim_pacchetto > MAX_UART_DIM_RESPONSE_BUFFER) {
+        // Gestisci l'errore, magari con un printf
+        printf("ERRORE: Pacchetto UART troppo grande per essere inviato!\r\n");
+        return;
+    }
 
     // Popolo il buffer
     response_buffer[0] = response_id;
@@ -564,7 +610,12 @@ void send_response_packet(uint8_t response_id, const uint8_t *p_payload, uint16_
 
     // calcolo checksum, per permettere check su rpi
     uint8_t checksum = 0;
+    #if 0
     for (int i=0;i<dim_pacchetto-1;i++){
+        checksum += response_buffer[i];
+    }
+    #endif
+    for (int i=0; i < (3 + len); i++){
         checksum += response_buffer[i];
     }
 
@@ -596,6 +647,7 @@ static void process_packet(void){
                 
             }
             send_response_packet(command_id, NULL, 0);
+            nrf_delay_ms(10);
             break;
 
         case SPI_CMD_SET_MODE_RESP:
@@ -613,7 +665,9 @@ static void process_packet(void){
                 //LEDS_ON(BSP_LED_2_MASK);
                 //LEDS_OFF(BSP_LED_0_MASK);
             }
+            nrf_delay_ms(10);
             break;
+
                 
 
         case SPI_CMD_SET_ID:
@@ -636,6 +690,7 @@ static void process_packet(void){
                     success_payload[0]=0x00;
                     send_response_packet(command_id, success_payload, 1); // invalid
                 }
+            nrf_delay_ms(10);
             break;
 
          case SPI_CMD_ENABLE_ANCHOR:
@@ -667,6 +722,7 @@ static void process_packet(void){
                   success_payload[0] = 0x00;
                   send_response_packet(command_id, success_payload, 1);
              }
+             nrf_delay_ms(10);
              break;
 
          case SPI_CMD_DISABLE_ANCHOR:
@@ -701,6 +757,7 @@ static void process_packet(void){
                   success_payload[0] = 0x00;
                   send_response_packet(command_id, success_payload, 1);
              }
+             nrf_delay_ms(10);
              break;
           case SPI_CMD_ENTER_CONFIG_MODE:
               if(!in_config_mode){
@@ -709,6 +766,7 @@ static void process_packet(void){
                 //printf("Entrato in modalità configurazione \r\n");
               }
               send_response_packet(command_id, NULL, 0);
+              nrf_delay_ms(10);
               break;
 
             case SPI_CMD_EXIT_CONFIG_MODE:
@@ -719,6 +777,7 @@ static void process_packet(void){
                 
               }
               send_response_packet(command_id, NULL, 0);
+              nrf_delay_ms(10);
               break;
 
             case SPI_CMD_SET_NUM_DEVICES:
@@ -735,7 +794,7 @@ static void process_packet(void){
                 success_payload[0] = 0x00;
                   send_response_packet(command_id, success_payload, 1);
               }
-              
+              nrf_delay_ms(10);
               break;
 
             case SPI_CMD_SET_DEVICE_ID_AT:
@@ -770,7 +829,7 @@ static void process_packet(void){
                 send_response_packet(command_id, success_payload, 1);
                 printf("Formato del comando non valido\r\n");
               }
-
+              nrf_delay_ms(10);
               break;
 
             case SPI_CMD_GET_NUM_DEVICES:{
@@ -783,6 +842,7 @@ static void process_packet(void){
                 }
 
                 send_response_packet(command_id, &enabled_devices_num, 1);
+                nrf_delay_ms(10);
                 break;        
             }
                 
@@ -806,6 +866,7 @@ static void process_packet(void){
                 
                     send_response_packet(command_id, response_payload, sizeof(response_payload));
                 }
+                nrf_delay_ms(10);
                 break;
 
             case SPI_CMD_MEASURE_ALL_DISTANCES:
@@ -819,7 +880,17 @@ static void process_packet(void){
                     // Formato: num_valid(1) + [id(8)+samples(1)+dist(8)] * num_valid
                     const int bytes_per_meas = sizeof(uint64_t) + sizeof(uint8_t) + sizeof(double);
                     uint16_t response_payload_len = 1 + (num_valid_measurements * bytes_per_meas);
-                    uint8_t response_payload[response_payload_len];
+                    
+                    //uint8_t response_payload[response_payload_len];
+                    uint8_t *response_payload = (uint8_t*)malloc(response_payload_len);
+                    if(response_payload==NULL) {
+                        LEDS_ON(BSP_LED_0_MASK);
+                        nrf_delay_ms(50);
+                        LEDS_OFF(BSP_LED_0_MASK);
+                        break;
+                    }
+
+
 
                     response_payload[0] = num_valid_measurements;
                     int current_pos = 1;
@@ -833,7 +904,10 @@ static void process_packet(void){
                     }
                 
                     send_response_packet(command_id, response_payload, response_payload_len);
+
+                    free(response_payload);
                 }
+                nrf_delay_ms(10);
                 break;
 
             case SPI_CMD_GET_INFO:
@@ -856,6 +930,7 @@ static void process_packet(void){
                 
                     send_response_packet(command_id, info_payload, sizeof(info_payload));
                 }
+                nrf_delay_ms(10);
                 break;
 
             case SPI_CMD_GET_HELP:
@@ -863,18 +938,21 @@ static void process_packet(void){
                     char help_str[] = "Comandi supportati: GET_INFO, SET_MODE, MEASURE, ecc.";
                     send_response_packet(command_id, (uint8_t*)help_str, strlen(help_str));
                  }
+                 nrf_delay_ms(10);
                  break;
 
             case SPI_SET_NLOS_MODE:
                 nlos_mode = true;
                 dwt_configure(&nlos_config);
                 send_response_packet(command_id, NULL, 0); // ACK
+                nrf_delay_ms(10);
                 break;
 
             case SPI_SET_LOS_MODE:
                 nlos_mode = false;
                 dwt_configure(&config);
                 send_response_packet(command_id, NULL, 0); // ACK
+                nrf_delay_ms(10);
                 break;
 
             case SPI_SET_ANTENNA_RX_DELAY:
@@ -884,6 +962,7 @@ static void process_packet(void){
                     dwt_setrxantennadelay(RECEIVER_DELAY);
                     send_response_packet(command_id, NULL, 0); // ACK
                 }
+                nrf_delay_ms(10);
                 break;
 
             case SPI_SET_ANTENNA_TX_DELAY:
@@ -893,11 +972,13 @@ static void process_packet(void){
                     dwt_settxantennadelay(TRANSMITTER_DELAY);
                     send_response_packet(command_id, NULL, 0); // ACK
                 }
+                nrf_delay_ms(10);
                 break;
 
             default:
                 // Comando non riconosciuto, potresti inviare una risposta NACK (Not Acknowledged)
                 send_response_packet(0xFF, NULL, 0); // 0xFF come ID di errore generico
+                nrf_delay_ms(10);
                 break;
   
     }
@@ -1014,7 +1095,7 @@ static void uart_event_handler(nrf_drv_uart_event_t * p_event, void * p_context)
     
     } else if(p_event->type == NRF_DRV_UART_EVT_ERROR){
         // 1. Segnala visivamente che un errore è avvenuto (opzionale)
-        LEDS_ON(BSP_LED_0_MASK); // Accendi LED verde
+        LEDS_ON(BSP_LED_1_MASK); // Accendi LED verde
         
         // 2. Disabilita la ricezione UART per resettare lo stato
         nrf_drv_uart_rx_disable(&m_uart);
@@ -1029,7 +1110,7 @@ static void uart_event_handler(nrf_drv_uart_event_t * p_event, void * p_context)
         nrf_drv_uart_rx(&m_uart, &m_uart_rx_byte, 1);
         
         // 6. Spegni il LED di errore per mostrare che il recupero è completo
-        LEDS_OFF(BSP_LED_0_MASK);
+        LEDS_OFF(BSP_LED_1_MASK);
     }
 
 }
@@ -1070,7 +1151,8 @@ static void uart_init(void)
 
 #define RESET_MAGIC_NUMBER 0xDEADBEEF
 
-
+#define HAT_RPI_CONNECTED 1
+#define PI_READY_PIN 26
 
 
  
@@ -1078,7 +1160,53 @@ static void uart_init(void)
  int main(void)
  {  
     
+    #if 0
+    uint32_t reset_reason = NRF_POWER->RESETREAS;
+    NRF_POWER->RESETREAS = 0xFFFFFFFF; // Pulisci il registro per il prossimo avvio
 
+    // Se il reset è stato causato da un power-on o dal pin di reset fisico...
+    if (reset_reason & (POWER_RESETREAS_RESETPIN_Msk))
+    {
+        LEDS_CONFIGURE(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK);
+        LEDS_ON(BSP_LED_0_MASK); // Usa un LED per segnalare che sei in attesa
+
+        // Attendi un tempo sufficiente per l'avvio del RPi. 
+        // 10-15 secondi è un valore più sicuro di 8.
+        nrf_delay_ms(15000); 
+
+        LEDS_OFF(BSP_LED_0_MASK);
+        
+        // Esegui un reset software. Al riavvio, il motivo del reset sarà
+        // POWER_RESETREAS_SREQ_Msk e questo blocco non verrà eseguito.
+        NVIC_SystemReset();
+    }
+    #endif
+    
+    #if HAT_RPI_CONNECTED
+    LEDS_CONFIGURE(BSP_LED_0_MASK);
+    LEDS_ON(BSP_LED_0_MASK); // Accendi un LED per indicare "In attesa del Pi"
+
+    // --- Inizia la logica dell'Handshake ---
+    
+    // Configura il pin di handshake come input con pull-down
+    nrf_gpio_cfg_input(PI_READY_PIN, NRF_GPIO_PIN_PULLDOWN);
+
+    // Ciclo di attesa: il programma si blocca qui finché il pin non va alto
+    while (nrf_gpio_pin_read(PI_READY_PIN) == 0)
+    {
+        // Puoi inserire un piccolo delay o un'operazione a basso consumo
+        // per evitare di sprecare troppa energia, ma per ora va bene anche vuoto.
+        nrf_delay_ms(10);
+    }
+    
+    // --- Fine della logica dell'Handshake ---
+
+    // Se siamo qui, il Pi ha inviato il segnale "Go".
+    // Spegni il LED di attesa.
+    LEDS_OFF(BSP_LED_0_MASK);
+    #endif
+
+   
     struct timeval t1,t2;
     double elapsedTime;
 
@@ -1088,30 +1216,6 @@ static void uart_init(void)
     //LEDS_ON(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK );
 
     LEDS_OFF(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK);
-
-    #if 0
-    // Leggi la causa del reset all'avvio
-    uint32_t reset_reason = NRF_POWER->RESETREAS;
-
-    // Pulisci il registro per il prossimo avvio (best practice)
-    NRF_POWER->RESETREAS = 0xFFFFFFFF;
-
-    // Controlla se il reset è avvenuto per un ciclo di accensione (power-on)
-    // o per un reset tramite il pin fisico. Questo è il "primo avvio".
-    if (reset_reason & POWER_RESETREAS_RESETPIN_Msk)
-    {
-        // Questo è il PRIMO avvio dopo un ciclo di alimentazione.
-        // Accendi un LED per segnalare che stiamo per resettare.
-        LEDS_ON(BSP_LED_2_MASK); // E.g., LED rosso
-
-        // Attendi che la Raspberry Pi si stabilizzi. Potresti dover
-        // aggiustare questo valore.
-        nrf_delay_ms(8000);
-
-        // Esegui il reset software.
-        NVIC_SystemReset();
-    }
-    #endif
 
  
    /*Initialization UART*/
@@ -1261,7 +1365,7 @@ static void uart_init(void)
       }
 
       // 2. Eseguo loop di polling con dispositivo in modalità rispondente
-      if(device_mode==DEVICE_MODE_RESPONDER && !in_config_mode){
+      if(device_mode==DEVICE_MODE_RESPONDER && !in_config_mode && !measurement_in_progress){
           ss_resp_run(DEVICE_ID);
       }
 
