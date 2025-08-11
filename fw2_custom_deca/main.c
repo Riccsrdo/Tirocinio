@@ -66,6 +66,11 @@
   static void prepare_all_measurements_for_spi(void);
 
 
+  // -------------------- DEBUG ----------------------------
+
+ #define UART_PRINT 0 // disabilita comunicazione UART con libreria, mostrando print a schermo
+
+
  // ------------------ Finite State Machine per SPI ---------------------
 
  typedef enum {
@@ -149,8 +154,8 @@
 
  volatile uint64_t anchor_ids[MAX_RESPONDERS] = {0, 1, 2, 3, 4, 5, 6, 7, 8,
                                                            9, 10, 11, 12, 13, 14, 15}; /* ID dei risponditori */
- volatile uint64_t DEVICE_ID = 0; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
- volatile bool anchor_enabled[MAX_RESPONDERS] = {true, true, false, false, false, false, false, false,
+ volatile uint64_t DEVICE_ID = 1; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
+ volatile bool anchor_enabled[MAX_RESPONDERS] = {true, true, true, false, false, false, false, false,
                                                         false, false, false, false, false, false, false, false}; /* Abilitazione dei risponditori */
 
 
@@ -1151,7 +1156,7 @@ static void uart_init(void)
 
 #define RESET_MAGIC_NUMBER 0xDEADBEEF
 
-#define HAT_RPI_CONNECTED 1
+#define HAT_RPI_CONNECTED 0
 #define PI_READY_PIN 26
 
 
@@ -1217,10 +1222,6 @@ static void uart_init(void)
 
     LEDS_OFF(BSP_LED_0_MASK | BSP_LED_1_MASK | BSP_LED_2_MASK);
 
- 
-   /*Initialization UART*/
-   //boUART_Init(); // sostituita con altra inizializzazione
-
    /* Initialize clock */
    APP_ERROR_CHECK(nrf_drv_clock_init());
    nrf_drv_clock_lfclk_request(NULL);
@@ -1235,7 +1236,11 @@ static void uart_init(void)
    //LEDS_ON(BSP_LED_0_MASK);
 
    // Inizializzazione UART
-   uart_init();
+   #if UART_PRINT
+   boUART_Init(); // print a schermo
+   #else
+   uart_init(); // interazioni con libreria
+   #endif
 
    /* Initialize SPI Slave */
    //spi_slave_init();

@@ -266,6 +266,8 @@ int ss_init_run(uint64_t dev_id)
 
   if (rx_int_flag)
   {		
+
+
     uint32 frame_len;
 
     
@@ -576,7 +578,6 @@ int ss_resp_run(uint64_t dev_id)
 
     if (rx_int_flag)
     {   
-
         
         printf("Responder: Ricevuto qualcosa, check del msg...\r\n");
         uint32 frame_len;
@@ -706,11 +707,11 @@ int ss_resp_run(uint64_t dev_id)
           else 
           {
             printf("messaggio ricevuto non diretto a noi \r\n");
-            LEDS_OFF(BSP_LED_2_MASK);
+            //LEDS_OFF(BSP_LED_2_MASK);
 
-                nrf_delay_ms(500);
+                //nrf_delay_ms(500);
 
-                LEDS_ON(BSP_LED_2_MASK);
+                //LEDS_ON(BSP_LED_2_MASK);
           }
         } 
         else
