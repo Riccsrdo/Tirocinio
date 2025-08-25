@@ -164,7 +164,7 @@
  static volatile bool measurement_in_progress = false;
 
  
- 
+ #define DEBUG_MEASUREMENT 1
 
 
  /*-------------------------------SPI--------------------------------*/
@@ -233,6 +233,14 @@
   double average_distance;
   uint8_t samples_count; // campioni validi ottenuti
   uint8_t requested_samples; // campioni richiesti
+
+  #if DEBUG_MEASUREMENT
+    // DA RIMUOVERE DA QUI
+  double median_distance; // mediana delle misurazioni ottenute
+  double rmse;
+  double mae;
+  #endif
+
  } average_measurement_t;
 
  // buffer globale misurazione media corrente
@@ -451,6 +459,47 @@ int compare_doubles(const void * a, const void * b){
 
     if(valid_samples>0){
       
+      #if DEBUG_MEASUREMENT
+      double sum = 0.0;
+      // --- Calcolo media
+
+      for(int i = 0; i<valid_samples; i++){
+          sum += measurements[i];
+      }
+      result.average_distance = sum / valid_samples;
+
+      // --- Calcolo mediana
+      // Effettuo un sort per prendere il valore mediano
+      qsort(measurements, valid_samples, sizeof(double), compare_doubles);
+
+      if(valid_samples % 2 == 1) { // Se l'array vanta di un numero dispari di misurazioni
+        result.median_distance = measurements[valid_samples/2];
+      } else { // altrimenti se sono pari
+        result.median_distance = (measurements[valid_samples/2 - 1] + measurements[valid_samples/2])/2.0;
+      }
+
+      
+      result.valid=true;
+      // result.average_distance = sum_distances / valid_samples; // rimosso per il nuovo metodo che usa mediana
+      result.samples_count = valid_samples;
+
+      // --- Calcolo MAE e RMSE
+      double sum_sq_err = 0.0;
+      double sum_abs_err = 0.0;
+
+      for(int i = 0; i < valid_samples; i++){
+          double error = measurements[i]-result.average_distance;
+          sum_abs_err += fabs(error);
+          sum_sq_err += error*error;
+      }
+
+      result.mae = sum_abs_err;
+      result.rmse = sqrt(sum_sq_err / valid_samples);
+
+      #else
+
+      // --- Calcolo mediana
+      
       // Effettuo un sort per prendere il valore mediano
       qsort(measurements, valid_samples, sizeof(double), compare_doubles);
 
@@ -476,6 +525,7 @@ int compare_doubles(const void * a, const void * b){
 
       // se la deviazione standard è troppo alta, c'è la possibilità che siamo in situazione di NLoS
       // TODO: Implementare controllo e gestire cambio automatico a modalità NLoS?
+      #endif
 
       
 
@@ -883,7 +933,11 @@ static void process_packet(void){
 
                     // Costruisci il payload della risposta
                     // Formato: num_valid(1) + [id(8)+samples(1)+dist(8)] * num_valid
+                    #if DEBUG_MEASUREMENT
+                    const int bytes_per_meas = sizeof(uint64_t) + sizeof(uint8_t) + 4*sizeof(double);
+                    #else
                     const int bytes_per_meas = sizeof(uint64_t) + sizeof(uint8_t) + sizeof(double);
+                    #endif
                     uint16_t response_payload_len = 1 + (num_valid_measurements * bytes_per_meas);
                     
                     //uint8_t response_payload[response_payload_len];
@@ -906,6 +960,17 @@ static void process_packet(void){
                         response_payload[current_pos++] = measurements[i].samples_count;
                         memcpy(&response_payload[current_pos], &measurements[i].average_distance, sizeof(double));
                         current_pos += sizeof(double);
+
+                        #if DEBUG_MEASUREMENT
+                        memcpy(&response_payload[current_pos], &measurements[i].median_distance, sizeof(double));
+                        current_pos += sizeof(double);
+                        
+                        memcpy(&response_payload[current_pos], &measurements[i].rmse, sizeof(double));
+                        current_pos += sizeof(double);
+                        
+                        memcpy(&response_payload[current_pos], &measurements[i].mae, sizeof(double));
+                        current_pos += sizeof(double);
+                        #endif
                     }
                 
                     send_response_packet(command_id, response_payload, response_payload_len);

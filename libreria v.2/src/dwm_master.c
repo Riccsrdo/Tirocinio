@@ -471,7 +471,11 @@ int dwm_measure_all(uint8_t num_samples, AverageMeasurement* results, int max_re
         *out_valid_count = (num_valid > max_results) ? max_results : num_valid;
         
         int current_pos = 1;
+        #if DEBUG_MEASUREMENT
+        const int bytes_per_meas = sizeof(uint64_t) + sizeof(uint8_t) + 4* sizeof(double);
+        #else
         const int bytes_per_meas = sizeof(uint64_t) + sizeof(uint8_t) + sizeof(double);
+        #endif
 
         for (int i = 0; i < *out_valid_count; i++) {
             memcpy(&results[i].id, &payload[current_pos], sizeof(uint64_t));
@@ -479,6 +483,17 @@ int dwm_measure_all(uint8_t num_samples, AverageMeasurement* results, int max_re
             results[i].samples_count = payload[current_pos++];
             memcpy(&results[i].average_distance, &payload[current_pos], sizeof(double));
             current_pos += sizeof(double);
+
+            #if DEBUG_MEASUREMENT
+            memcpy(&results[i].median_distance, &payload[current_pos], sizeof(double));
+            current_pos += sizeof(double);
+            
+            memcpy(&results[i].rmse, &payload[current_pos], sizeof(double));
+            current_pos += sizeof(double);
+            
+            memcpy(&results[i].mae, &payload[current_pos], sizeof(double));
+            current_pos += sizeof(double);
+            #endif
 
             results[i].valid = 1;
             results[i].requested_samples = num_samples;

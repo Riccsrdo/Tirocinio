@@ -52,6 +52,8 @@ che verranno processati e che, a seconda del comando, prevederanno una risposta.
 #define MAX_DWM_RESPONDERS 16 // Massimo numero atteso dal DWM, modificabile in caso di modifica
 // al firmware base del dispositivo
 
+#define DEBUG_MEASUREMENT 1
+
 /*-----Strutture di Utilità-------*/
 
 // --- Struttura per contenere i dati delle distanze ---
@@ -68,6 +70,14 @@ typedef struct {
   uint8_t samples_count; // numero di misurazioni effettuate
   uint8_t requested_samples; // numero richiesto originariamente
   int valid; // flag booleana che indica se le misurazioni sono valide
+
+  #if DEBUG_MEASUREMENT
+  // DA RIMUOVERE DA QUI
+  double median_distance; // mediana delle misurazioni ottenute
+  double rmse;
+  double mae;
+  #endif
+
 } AverageMeasurement;
 
 // -- Struttura per info di configurazione --
