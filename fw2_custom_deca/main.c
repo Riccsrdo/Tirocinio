@@ -126,7 +126,7 @@
  #define RX_ANT_DLY 16456
 
  // Delay Antenne
- volatile int RECEIVER_DELAY = 16456;
+ volatile int RECEIVER_DELAY = 16548; // 16456
  volatile int TRANSMITTER_DELAY = 16300;
  
  //--------------dw1000---end---------------
@@ -154,8 +154,8 @@
 
  volatile uint64_t anchor_ids[MAX_RESPONDERS] = {0, 1, 2, 3, 4, 5, 6, 7, 8,
                                                            9, 10, 11, 12, 13, 14, 15}; /* ID dei risponditori */
- volatile uint64_t DEVICE_ID = 1; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
- volatile bool anchor_enabled[MAX_RESPONDERS] = {true, true, true, false, false, false, false, false,
+ volatile uint64_t DEVICE_ID = 0; /* ID del dispositivo in uso */                // DA CONFIGURARE IN BASE AL DISPOSITIVO
+ volatile bool anchor_enabled[MAX_RESPONDERS] = {true, true, true, true, false, false, false, false,
                                                         false, false, false, false, false, false, false, false}; /* Abilitazione dei risponditori */
 
 
@@ -374,7 +374,7 @@ int compare_doubles(const void * a, const void * b){
     return 0;
 }
 
- static average_measurement_t perform_average_measurement(uint64_t target_id, uint8_t num_samples) {
+static average_measurement_t _perform_average_core(uint64_t target_id, uint8_t num_samples, int target_index){
     average_measurement_t result = {
       .target_id = target_id,
       .valid = false,
@@ -382,6 +382,120 @@ int compare_doubles(const void * a, const void * b){
       .samples_count = 0,
       .requested_samples = num_samples
     };
+
+    double sum_distances = 0.0;
+    uint8_t valid_samples = 0;
+
+    // Buffer per valori mediani
+    double measurements_buffer[num_samples];
+
+    // Eseguo x misurazioni
+    for(uint8_t i = 0; i< num_samples; i++){
+      
+      // resetto le informazioni sulla distanza per questo tentativo
+      distances[target_index].valid = false;
+      
+      ss_init_run(target_id);
+
+      // controllo se la misurazione è valida
+      if(distances[target_index].valid){
+        if(distances[target_index].distance>20.0) continue;
+        sum_distances += distances[target_index].distance;
+        measurements_buffer[valid_samples] = distances[target_index].distance;
+        valid_samples++;
+      }
+
+      //nrf_delay_ms(50); // breve ritardo
+      nrf_delay_ms(8); // DA TESTARE
+      
+      // In caso di comando UART ricevuto, si interrompe
+      //if(uart_new_command){
+      //  break;
+      //}
+    }
+
+    if(valid_samples>0){
+      
+      #if DEBUG_MEASUREMENT
+      double sum = 0.0;
+      // --- Calcolo media
+
+      for(int i = 0; i<valid_samples; i++){
+          sum += measurements_buffer[i];
+      }
+      result.average_distance = sum / valid_samples;
+
+      // --- Calcolo mediana
+      // Effettuo un sort per prendere il valore mediano
+      qsort(measurements_buffer, valid_samples, sizeof(double), compare_doubles);
+
+      if(valid_samples % 2 == 1) { // Se l'array vanta di un numero dispari di misurazioni
+        result.median_distance = measurements_buffer[valid_samples/2];
+      } else { // altrimenti se sono pari
+        result.median_distance = (measurements_buffer[valid_samples/2 - 1] + measurements_buffer[valid_samples/2])/2.0;
+      }
+
+      
+      result.valid=true;
+      // result.average_distance = sum_distances / valid_samples; // rimosso per il nuovo metodo che usa mediana
+      result.samples_count = valid_samples;
+
+      // --- Calcolo MAE e RMSE
+      double sum_sq_err = 0.0;
+      double sum_abs_err = 0.0;
+
+      for(int i = 0; i < valid_samples; i++){
+          double error = measurements_buffer[i]-result.average_distance;
+          sum_abs_err += fabs(error);
+          sum_sq_err += error*error;
+      }
+
+      result.mae = sum_abs_err;
+      result.rmse = sqrt(sum_sq_err / valid_samples);
+
+      #else
+
+      // --- Calcolo mediana
+      
+      // Effettuo un sort per prendere il valore mediano
+      qsort(measurements_buffer, valid_samples, sizeof(double), compare_doubles);
+
+      if(valid_samples % 2 == 1) { // Se l'array vanta di un numero dispari di misurazioni
+        result.average_distance = measurements_buffer[valid_samples/2];
+      } else { // altrimenti se sono pari
+        result.average_distance = (measurements_buffer[valid_samples/2 - 1] + measurements_buffer[valid_samples/2])/2.0;
+      }
+
+      
+      result.valid=true;
+      // result.average_distance = sum_distances / valid_samples; // rimosso per il nuovo metodo che usa mediana
+      result.samples_count = valid_samples;
+
+      // Calcolo deviazione standard per verificare se sono in condizioni di NLoS
+      double sum_sq_diff = 0.0;
+      for(int i=0;i<valid_samples; i++){
+        double diff = measurements_buffer[i] - result.average_distance;
+        sum_sq_diff += diff * diff;
+      }
+
+      double std_dev = sqrt(sum_sq_diff / valid_samples);
+
+      // se la deviazione standard è troppo alta, c'è la possibilità che siamo in situazione di NLoS
+      // TODO: Implementare controllo e gestire cambio automatico a modalità NLoS?
+      #endif
+
+      
+
+      //printf("Distanza media calcolata dal dispositivo %08lX%08lX è: %f\r\n", id_high, id_low, result.average_distance);
+    }
+
+
+    return result;
+
+
+}
+
+ static average_measurement_t perform_average_measurement(uint64_t target_id, uint8_t num_samples) {
 
     measurement_in_progress = true; // blocco il loop main da tornare in responder
     dwt_forcetrxoff(); // disattivo ricevitore
@@ -421,117 +535,12 @@ int compare_doubles(const void * a, const void * b){
     if (target_index == -1) {
         printf("Errore: Target ID non trovato nella lista ancore.\r\n");
         measurement_in_progress = false; // Sblocca il main loop
+        average_measurement_t result = {.valid=false};
         return result;
     }
+
+    average_measurement_t result = _perform_average_core(target_id, num_samples, target_index);
     
-    uint32_t id_high = (uint32_t)(target_id>>32);
-    uint32_t id_low = (uint32_t)(target_id & 0xFFFFFFFFUL);
-    printf("Inizio misurazioni verso target con id: %08lX%08lX\r\n", id_high, id_low);
-
-    double sum_distances = 0.0;
-    uint8_t valid_samples = 0;
-
-    // Buffer per valori mediani
-    double measurements[num_samples];
-
-    // Eseguo x misurazioni
-    for(uint8_t i = 0; i< num_samples; i++){
-      
-      // resetto le informazioni sulla distanza per questo tentativo
-      distances[target_index].valid = false;
-      
-      ss_init_run(target_id);
-
-      // controllo se la misurazione è valida
-      if(distances[target_index].valid){
-        sum_distances += distances[target_index].distance;
-        measurements[valid_samples] = distances[target_index].distance;
-        valid_samples++;
-      }
-
-      nrf_delay_ms(50); // breve ritardo
-      
-      // In caso di comando UART ricevuto, si interrompe
-      if(uart_new_command){
-        break;
-      }
-    }
-
-    if(valid_samples>0){
-      
-      #if DEBUG_MEASUREMENT
-      double sum = 0.0;
-      // --- Calcolo media
-
-      for(int i = 0; i<valid_samples; i++){
-          sum += measurements[i];
-      }
-      result.average_distance = sum / valid_samples;
-
-      // --- Calcolo mediana
-      // Effettuo un sort per prendere il valore mediano
-      qsort(measurements, valid_samples, sizeof(double), compare_doubles);
-
-      if(valid_samples % 2 == 1) { // Se l'array vanta di un numero dispari di misurazioni
-        result.median_distance = measurements[valid_samples/2];
-      } else { // altrimenti se sono pari
-        result.median_distance = (measurements[valid_samples/2 - 1] + measurements[valid_samples/2])/2.0;
-      }
-
-      
-      result.valid=true;
-      // result.average_distance = sum_distances / valid_samples; // rimosso per il nuovo metodo che usa mediana
-      result.samples_count = valid_samples;
-
-      // --- Calcolo MAE e RMSE
-      double sum_sq_err = 0.0;
-      double sum_abs_err = 0.0;
-
-      for(int i = 0; i < valid_samples; i++){
-          double error = measurements[i]-result.average_distance;
-          sum_abs_err += fabs(error);
-          sum_sq_err += error*error;
-      }
-
-      result.mae = sum_abs_err;
-      result.rmse = sqrt(sum_sq_err / valid_samples);
-
-      #else
-
-      // --- Calcolo mediana
-      
-      // Effettuo un sort per prendere il valore mediano
-      qsort(measurements, valid_samples, sizeof(double), compare_doubles);
-
-      if(valid_samples % 2 == 1) { // Se l'array vanta di un numero dispari di misurazioni
-        result.average_distance = measurements[valid_samples/2];
-      } else { // altrimenti se sono pari
-        result.average_distance = (measurements[valid_samples/2 - 1] + measurements[valid_samples/2])/2.0;
-      }
-
-      
-      result.valid=true;
-      // result.average_distance = sum_distances / valid_samples; // rimosso per il nuovo metodo che usa mediana
-      result.samples_count = valid_samples;
-
-      // Calcolo deviazione standard per verificare se sono in condizioni di NLoS
-      double sum_sq_diff = 0.0;
-      for(int i=0;i<valid_samples; i++){
-        double diff = measurements[i] - result.average_distance;
-        sum_sq_diff += diff * diff;
-      }
-
-      double std_dev = sqrt(sum_sq_diff / valid_samples);
-
-      // se la deviazione standard è troppo alta, c'è la possibilità che siamo in situazione di NLoS
-      // TODO: Implementare controllo e gestire cambio automatico a modalità NLoS?
-      #endif
-
-      
-
-      printf("Distanza media calcolata dal dispositivo %08lX%08lX è: %f\r\n", id_high, id_low, result.average_distance);
-    }
-
     if (switched_mode) {
         device_mode = original_mode;
         // 5. Riconfigura il DW1000 per la modalità Responder
@@ -553,13 +562,25 @@ int compare_doubles(const void * a, const void * b){
       //printf("Misurazioni non possibili in modalità risponditore\r\n");
     }
 
+     measurement_in_progress = true;
+    dwt_forcetrxoff();
+    device_mode_t original_mode = device_mode;
+    bool switched_mode = false;
+
+    if (original_mode == DEVICE_MODE_RESPONDER) {
+        device_mode = DEVICE_MODE_INITIATOR;
+        switched_mode = true;
+        dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
+        dwt_setrxtimeout(65000);
+        printf("Switch temporaneo a Initiator per misurazioni multiple.\r\n");
+    }
+
     num_valid_measurements = 0;
 
-    average_measurement_t temp_buf;
 
     for(int i=0; i< MAX_RESPONDERS; i++){
       if(anchor_enabled[i] && anchor_ids[i]!=DEVICE_ID) {
-        temp_buf = perform_average_measurement(anchor_ids[i], num_samples);
+        average_measurement_t temp_buf = _perform_average_core(anchor_ids[i], num_samples, i);
 
         if(temp_buf.valid) {
             measurements[num_valid_measurements] = temp_buf;
@@ -570,6 +591,13 @@ int compare_doubles(const void * a, const void * b){
         break;
       }
     }
+
+    if (switched_mode) {
+        device_mode = original_mode;
+        dwt_setrxtimeout(0);
+        printf("Misurazioni multiple completate. Ritorno a modalità Responder.\r\n");
+    }
+    measurement_in_progress = false;
  }
 
 
@@ -1221,7 +1249,7 @@ static void uart_init(void)
 
 #define RESET_MAGIC_NUMBER 0xDEADBEEF
 
-#define HAT_RPI_CONNECTED 0
+#define HAT_RPI_CONNECTED 1
 #define PI_READY_PIN 26
 
 
